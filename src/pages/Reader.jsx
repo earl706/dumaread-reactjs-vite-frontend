@@ -1,0 +1,436 @@
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { Link, useParams } from 'react-router-dom';
+import { ArrowLeft, ChevronLeft, ChevronRight } from 'lucide-react';
+import { getDocument, GlobalWorkerOptions } from 'pdfjs-dist';
+import pdfWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
+
+import { booksApi } from '../lib/resources';
+import {
+	WORDS_PER_PAGE,
+	backendPageFromVisual,
+	pageIndexForWordOffset,
+	paginateToFit,
+	wordOffsetAtPage
+} from '../lib/reading';
+import { formatDurationSeconds } from '../lib/format';
+import { useReadingSession } from '../hooks/useReadingSession';
+import { Button, EmptyState, LoadingScreen } from '../components/ui';
+
+GlobalWorkerOptions.workerSrc = pdfWorker;
+
+function useTwoPage() {
+	const [twoPage, setTwoPage] = useState(() =>
+		typeof window === 'undefined' ? true : window.matchMedia('(min-width: 900px)').matches
+	);
+	useEffect(() => {
+		const mq = window.matchMedia('(min-width: 900px)');
+		const onChange = () => setTwoPage(mq.matches);
+		onChange();
+		mq.addEventListener('change', onChange);
+		return () => mq.removeEventListener('change', onChange);
+	}, []);
+	return twoPage;
+}
+
+function PageProse({ blocks }) {
+	if (!blocks?.length) return null;
+	return (
+		<div className="reader-prose">
+			{blocks.map((block, i) => {
+				if (block.type === 'h') return <h2 key={i}>{block.text}</h2>;
+				if (block.type === 'ul') {
+					return (
+						<ul key={i}>
+							{block.items.map((item, j) => (
+								<li key={j}>{item}</li>
+							))}
+						</ul>
+					);
+				}
+				return <p key={i}>{block.text}</p>;
+			})}
+		</div>
+	);
+}
+
+function PdfCanvas({ pdf, pageNumber }) {
+	const canvasRef = useRef(null);
+	const [error, setError] = useState('');
+	const [frame, setFrame] = useState(0);
+
+	useEffect(() => {
+		const parent = canvasRef.current?.parentElement;
+		if (!parent) return undefined;
+		const ro = new ResizeObserver(() => setFrame((n) => n + 1));
+		ro.observe(parent);
+		return () => ro.disconnect();
+	}, [pdf]);
+
+	useEffect(() => {
+		const canvas = canvasRef.current;
+		if (!pdf || !canvas || !pageNumber) return undefined;
+		let cancelled = false;
+		let renderTask;
+		pdf
+			.getPage(pageNumber)
+			.then((page) => {
+				if (cancelled) return undefined;
+				const base = page.getViewport({ scale: 1 });
+				const parent = canvas.parentElement;
+				const maxWidth = Math.max(120, parent?.clientWidth || 480);
+				const maxHeight = Math.max(160, parent?.clientHeight || 640);
+				const scale = Math.min(maxWidth / base.width, maxHeight / base.height);
+				const viewport = page.getViewport({ scale });
+				const context = canvas.getContext('2d');
+				canvas.width = viewport.width;
+				canvas.height = viewport.height;
+				renderTask = page.render({ canvasContext: context, viewport });
+				return renderTask.promise;
+			})
+			.catch(() => {
+				if (!cancelled) setError('Could not render this page.');
+			});
+		return () => {
+			cancelled = true;
+			renderTask?.cancel();
+		};
+	}, [pdf, pageNumber, frame]);
+
+	if (error) {
+		return <p className="p-8 text-center text-sm text-red-400">{error}</p>;
+	}
+	return <canvas ref={canvasRef} className="mx-auto max-h-full max-w-full bg-white shadow-sm" />;
+}
+
+function PdfSpread({ data, leftPage, rightPage, twoPage }) {
+	const [pdf, setPdf] = useState(null);
+	const [error, setError] = useState('');
+
+	useEffect(() => {
+		if (!data) return undefined;
+		let cancelled = false;
+		let loaded;
+		const task = getDocument({ data });
+		task.promise
+			.then((doc) => {
+				if (cancelled) {
+					doc.destroy();
+					return;
+				}
+				loaded = doc;
+				setPdf(doc);
+			})
+			.catch(() => {
+				if (!cancelled) setError('Could not open this PDF.');
+			});
+		return () => {
+			cancelled = true;
+			task.destroy();
+			loaded?.destroy();
+			setPdf(null);
+		};
+	}, [data]);
+
+	if (error) {
+		return <p className="p-8 text-center text-sm text-red-400">{error}</p>;
+	}
+	return (
+		<>
+			<div className="reader-page flex items-center justify-center">
+				{pdf ? (
+					<PdfCanvas pdf={pdf} pageNumber={leftPage} />
+				) : (
+					<LoadingScreen label="Rendering PDF…" />
+				)}
+			</div>
+			{twoPage ? (
+				<div className="reader-page flex items-center justify-center">
+					{pdf && rightPage ? <PdfCanvas pdf={pdf} pageNumber={rightPage} /> : null}
+				</div>
+			) : null}
+		</>
+	);
+}
+
+function TextSpread({ pages, leftPage, rightPage, twoPage }) {
+	return (
+		<>
+			<div className="reader-page">
+				<PageProse blocks={pages[leftPage - 1] || []} />
+			</div>
+			{twoPage ? (
+				<div className="reader-page">
+					{rightPage ? <PageProse blocks={pages[rightPage - 1] || []} /> : null}
+				</div>
+			) : null}
+		</>
+	);
+}
+
+export default function ReaderPage() {
+	const { id } = useParams();
+	const twoPage = useTwoPage();
+	const { data: book, isLoading, isError } = booksApi.useDetail(id);
+	const [page, setPage] = useState(null);
+	const [pdfBytes, setPdfBytes] = useState(null);
+	const [text, setText] = useState('');
+	const [loadError, setLoadError] = useState('');
+	const [contentReady, setContentReady] = useState(false);
+	const [textPages, setTextPages] = useState([[]]);
+	const [pagesReady, setPagesReady] = useState(false);
+	const [pageBox, setPageBox] = useState({ width: 0, height: 0 });
+	const spreadRef = useRef(null);
+	const wordOffsetRef = useRef(0);
+	const sessionStartedAt = useRef(Date.now());
+	const [elapsed, setElapsed] = useState(0);
+
+	useEffect(() => {
+		if (!book) return;
+		if (book.format === 'pdf') {
+			setPage(book.current_page > 0 ? book.current_page : 1);
+			setPagesReady(true);
+		} else {
+			wordOffsetRef.current = Math.max(
+				0,
+				((book.current_page > 0 ? book.current_page : 1) - 1) * WORDS_PER_PAGE
+			);
+			setPage(null);
+			setPagesReady(false);
+			setTextPages([[]]);
+		}
+	}, [book?.id]);
+
+	useEffect(() => {
+		if (!book) return undefined;
+		let cancelled = false;
+		setContentReady(false);
+		setLoadError('');
+		(async () => {
+			try {
+				if (book.format === 'pdf') {
+					const blob = await booksApi.fetchFile(book.id);
+					const buf = await blob.arrayBuffer();
+					if (!cancelled) setPdfBytes(buf);
+				} else {
+					const payload = await booksApi.fetchText(book.id);
+					if (!cancelled) setText(payload.text || '');
+				}
+				if (!cancelled) setContentReady(true);
+			} catch {
+				if (!cancelled) setLoadError('Could not load this book.');
+			}
+		})();
+		return () => {
+			cancelled = true;
+		};
+	}, [book?.id, book?.format]);
+
+	const isPdf = book?.format === 'pdf';
+	const totalPages = isPdf ? book?.page_count || 1 : textPages.length || 1;
+	const currentPage = page == null ? 1 : Math.min(Math.max(page, 1), totalPages);
+	const turn = twoPage ? 2 : 1;
+	const leftPage = twoPage && currentPage % 2 === 0 ? currentPage - 1 : currentPage;
+	const rightPage = twoPage && leftPage + 1 <= totalPages ? leftPage + 1 : null;
+	const footerPage = rightPage || leftPage;
+	const pagesLeft = Math.max(0, totalPages - footerPage);
+	const trackedPage = isPdf
+		? footerPage
+		: backendPageFromVisual(textPages, footerPage, book?.page_count || 1);
+
+	useReadingSession({
+		bookId: book?.id,
+		currentPage: trackedPage,
+		enabled: Boolean(book) && contentReady && pagesReady && !loadError && page != null
+	});
+
+	useEffect(() => {
+		const timer = window.setInterval(() => {
+			setElapsed(Math.floor((Date.now() - sessionStartedAt.current) / 1000));
+		}, 1000);
+		return () => window.clearInterval(timer);
+	}, []);
+
+	useEffect(() => {
+		if (!contentReady || loadError) return undefined;
+		const root = spreadRef.current;
+		if (!root) return undefined;
+		const pageEl = root.querySelector('.reader-page');
+		if (!pageEl) return undefined;
+		const update = () => {
+			const w = Math.round(pageEl.clientWidth);
+			const h = Math.round(pageEl.clientHeight);
+			setPageBox((prev) =>
+				prev.width === w && prev.height === h ? prev : { width: w, height: h }
+			);
+		};
+		update();
+		const ro = new ResizeObserver(update);
+		ro.observe(pageEl);
+		return () => ro.disconnect();
+	}, [contentReady, loadError, twoPage, isPdf]);
+
+	useEffect(() => {
+		if (isPdf || !text || pageBox.width < 40 || pageBox.height < 40) return undefined;
+		let cancelled = false;
+		const run = () => {
+			if (cancelled) return;
+			const pages = paginateToFit(text, pageBox);
+			if (cancelled) return;
+			setTextPages(pages);
+			setPage(pageIndexForWordOffset(pages, wordOffsetRef.current) + 1);
+			setPagesReady(true);
+		};
+		const fonts = document.fonts?.ready;
+		if (fonts) fonts.then(run);
+		else run();
+		return () => {
+			cancelled = true;
+		};
+	}, [isPdf, text, pageBox.width, pageBox.height]);
+
+	const go = useCallback(
+		(next) => {
+			const clamped = Math.min(Math.max(next, 1), totalPages);
+			setPage(clamped);
+			if (!isPdf) {
+				const left = twoPage && clamped % 2 === 0 ? clamped - 1 : clamped;
+				wordOffsetRef.current = wordOffsetAtPage(textPages, left);
+			}
+		},
+		[totalPages, isPdf, twoPage, textPages]
+	);
+
+	const goPrev = useCallback(() => go(leftPage - turn), [go, leftPage, turn]);
+	const goNext = useCallback(() => go(leftPage + turn), [go, leftPage, turn]);
+	const canPrev = leftPage > 1;
+	const canNext = footerPage < totalPages;
+
+	useEffect(() => {
+		const onKey = (e) => {
+			if (e.key === 'ArrowRight' || e.key === 'PageDown' || e.key === ' ') {
+				if (
+					e.key === ' ' &&
+					(e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement)
+				) {
+					return;
+				}
+				e.preventDefault();
+				if (canNext) goNext();
+			} else if (e.key === 'ArrowLeft' || e.key === 'PageUp') {
+				e.preventDefault();
+				if (canPrev) goPrev();
+			}
+		};
+		window.addEventListener('keydown', onKey);
+		return () => window.removeEventListener('keydown', onKey);
+	}, [canNext, canPrev, goNext, goPrev]);
+
+	if (isLoading) {
+		return (
+			<div className="reader-shell flex h-full min-h-screen items-center justify-center">
+				<LoadingScreen label="Opening book…" />
+			</div>
+		);
+	}
+	if (isError || !book) {
+		return (
+			<div className="reader-shell flex h-full min-h-screen items-center justify-center p-8">
+				<EmptyState
+					title="Book not found"
+					description="This book is missing or you do not have access."
+					action={
+						<Link to="/library">
+							<Button variant="secondary">Back to library</Button>
+						</Link>
+					}
+				/>
+			</div>
+		);
+	}
+
+	const spreadClass = twoPage ? 'reader-spread' : 'reader-spread reader-spread-single';
+
+	return (
+		<div className="reader-shell relative flex h-full min-h-screen flex-col">
+			<header className="relative shrink-0 px-16 pt-5 pb-2">
+				<Link
+					to="/library"
+					className="reader-nav absolute top-5 left-5 inline-flex items-center gap-1 text-xs"
+				>
+					<ArrowLeft size={14} /> Library
+				</Link>
+				<p className="font-reader truncate text-center text-[12px] tracking-wide text-[#9a9a9a]">
+					{book.title}
+				</p>
+				<p className="absolute top-5 right-5 hidden text-[11px] text-[#6e6e6e] sm:block">
+					{formatDurationSeconds(elapsed)}
+					{book.total_reading_seconds
+						? ` · ${formatDurationSeconds(book.total_reading_seconds)} total`
+						: ''}
+				</p>
+			</header>
+
+			<div className="relative flex min-h-0 flex-1 flex-col">
+				<button
+					type="button"
+					className="reader-nav absolute inset-y-0 left-0 z-10 flex w-14 items-center justify-center"
+					onClick={goPrev}
+					disabled={!canPrev}
+					aria-label="Previous pages"
+				>
+					<ChevronLeft size={28} strokeWidth={1.5} />
+				</button>
+
+				<div className="mx-auto flex min-h-0 w-full max-w-[1300px] flex-1 flex-col px-10">
+					<main className="min-h-0 flex-1 overflow-hidden py-3">
+						{loadError ? (
+							<EmptyState title="Could not open this file" description={loadError} />
+						) : !contentReady ? (
+							<LoadingScreen label="Loading pages…" />
+						) : (
+							<div ref={spreadRef} className={spreadClass}>
+								{book.format === 'pdf' ? (
+									<PdfSpread
+										data={pdfBytes}
+										leftPage={leftPage}
+										rightPage={rightPage}
+										twoPage={twoPage}
+									/>
+								) : (
+									<TextSpread
+										pages={textPages}
+										leftPage={leftPage}
+										rightPage={rightPage}
+										twoPage={twoPage}
+									/>
+								)}
+							</div>
+						)}
+					</main>
+					<footer
+						className={`shrink-0 pt-2 pb-5 text-[12px] text-[#8a8a8a] ${
+							twoPage && rightPage ? 'grid grid-cols-2' : 'flex justify-between'
+						}`}
+					>
+						<p className={twoPage && rightPage ? 'text-center' : ''}>
+							{footerPage} of {totalPages}
+						</p>
+						<p className="text-right">
+							{pagesLeft} page{pagesLeft === 1 ? '' : 's'} left
+						</p>
+					</footer>
+				</div>
+
+				<button
+					type="button"
+					className="reader-nav absolute inset-y-0 right-0 z-10 flex w-14 items-center justify-center"
+					onClick={goNext}
+					disabled={!canNext}
+					aria-label="Next pages"
+				>
+					<ChevronRight size={28} strokeWidth={1.5} />
+				</button>
+			</div>
+		</div>
+	);
+}

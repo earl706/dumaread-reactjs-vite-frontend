@@ -1,0 +1,93 @@
+# ---------------------------------------------------------------------------
+# Frontend — Vite + React + Vitest + Tailwind
+# Paths are relative to this directory.
+# ---------------------------------------------------------------------------
+
+# Dependencies
+node_modules/
+jspm_packages/
+.pnp
+.pnp.js
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/sdks
+!.yarn/versions
+.pnpm-store/
+
+# Build output
+dist/
+dist-ssr/
+build/
+out/
+.output/
+*.local
+
+# Vite / bundler caches
+.vite/
+.cache/
+.parcel-cache/
+.turbo/
+.rollup.cache/
+*.tsbuildinfo
+
+# Env & secrets (keep example files)
+.env
+.env.*
+!.env.example
+!.env*.example
+*.pem
+*.key
+
+# Logs & debug
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
+
+# Test & coverage
+coverage/
+*.lcov
+.nyc_output/
+.vitest/
+test-results/
+playwright-report/
+blob-report/
+playwright/.cache/
+cypress/videos/
+cypress/screenshots/
+
+# ESLint / style
+.eslintcache
+.stylelintcache
+
+# Type / analysis
+.scannerwork/
+
+# Optional local tooling
+.vercel/
+.netlify/
+.firebase/
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+*.swp
+*.swo
+*~
+*.bak
+*.tmp
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Packaging
+*.tgz
+.npm/
+.yarn-integrity
