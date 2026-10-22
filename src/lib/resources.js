@@ -39,6 +39,9 @@ export const booksApi = {
 	fetchFile(id) {
 		return getBlob(`${booksHooks.basePath}${id}/file/`);
 	},
+	fetchCover(id) {
+		return getBlob(`${booksHooks.basePath}${id}/cover/`);
+	},
 	fetchText(id) {
 		return get(`${booksHooks.basePath}${id}/text/`);
 	}

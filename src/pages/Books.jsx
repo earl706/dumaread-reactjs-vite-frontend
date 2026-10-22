@@ -1,32 +1,31 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { BookOpen, Plus } from 'lucide-react';
 
 import { booksApi } from '../lib/resources';
-import { isMobileApp } from '../lib/desktop';
 import { ACCEPTED_BOOK_TYPES, MAX_BOOK_BYTES, formatLabel } from '../lib/reading';
-import { STATUS_LABELS, STATUS_TONE } from '../lib/status';
+import { formatFromName, previewBookFile } from '../lib/bookPreview';
+import { STATUS_LABELS } from '../lib/status';
 import { formatDate, formatDurationSeconds } from '../lib/format';
 import { toast } from '../stores/toastStore';
 import { useListControls } from '../hooks/useListControls';
 import { PageHeader } from '../components/layout/PageHeader';
+import { BookCard } from '../components/books/BookCard';
+import { UploadPreview } from '../components/books/UploadPreview';
 import {
-	Badge,
 	Button,
-	DataSheet,
 	EmptyState,
 	Input,
 	ListToolbar,
 	LoadingScreen,
 	Modal,
 	Pagination,
-	ProgressBar,
 	RecordInfoModal,
-	Select,
-	Table
+	Select
 } from '../components/ui';
 
 const DEFAULT_ORDERING = '-created_at';
+const GRID_PAGE_SIZE = 6;
 
 const SORT_OPTIONS = [
 	{ value: '-created_at', label: 'Newest first' },
@@ -59,7 +58,8 @@ const STATUS_SELECT = [
 	{ value: 'archived', label: 'Archived' }
 ];
 
-const EMPTY_FORM = { title: '', author: '', file: null };
+const EMPTY_FORM = { title: '', author: '', status: 'unread', file: null };
+const EMPTY_PREVIEW = { status: 'idle', coverUrl: null, format: '', pageCount: null };
 
 function firstError(value) {
 	if (typeof value === 'string') return value;
@@ -80,7 +80,6 @@ function errorMessage(err, fallback) {
 
 export default function BooksPage() {
 	const navigate = useNavigate();
-	const mobile = isMobileApp();
 	const {
 		search,
 		setSearch,
@@ -91,7 +90,7 @@ export default function BooksPage() {
 		queryParams,
 		setPage,
 		page
-	} = useListControls({ defaultOrdering: DEFAULT_ORDERING });
+	} = useListControls({ defaultOrdering: DEFAULT_ORDERING, pageSize: GRID_PAGE_SIZE });
 
 	const { data, isLoading, isError } = booksApi.useList(queryParams);
 	const books = data?.results || [];
@@ -100,6 +99,7 @@ export default function BooksPage() {
 	const [editing, setEditing] = useState(null);
 	const [infoRow, setInfoRow] = useState(null);
 	const [form, setForm] = useState(EMPTY_FORM);
+	const [preview, setPreview] = useState(EMPTY_PREVIEW);
 
 	const createBook = booksApi.useCreate({
 		onSuccess: () => {
@@ -121,12 +121,18 @@ export default function BooksPage() {
 	const openCreate = () => {
 		setEditing(null);
 		setForm(EMPTY_FORM);
+		setPreview(EMPTY_PREVIEW);
 		setModalOpen(true);
 	};
 
 	const openEdit = (book) => {
 		setEditing(book);
-		setForm({ title: book.title || '', author: book.author || '', file: null });
+		setForm({
+			title: book.title || '',
+			author: book.author || '',
+			status: book.status || 'unread',
+			file: null
+		});
 		setModalOpen(true);
 	};
 
@@ -134,12 +140,77 @@ export default function BooksPage() {
 		setModalOpen(false);
 		setEditing(null);
 		setForm(EMPTY_FORM);
+		setPreview(EMPTY_PREVIEW);
 	};
+
+	useEffect(() => {
+		if (editing || !form.file) {
+			setPreview(EMPTY_PREVIEW);
+			return undefined;
+		}
+		const file = form.file;
+		let cancelled = false;
+		let coverUrl = null;
+		setPreview({
+			status: 'loading',
+			coverUrl: null,
+			format: formatFromName(file.name),
+			pageCount: null
+		});
+		previewBookFile(file)
+			.then((result) => {
+				if (cancelled) {
+					if (result.coverUrl) URL.revokeObjectURL(result.coverUrl);
+					return;
+				}
+				coverUrl = result.coverUrl;
+				setPreview({
+					status: 'ready',
+					coverUrl: result.coverUrl,
+					format: result.format,
+					pageCount: result.pageCount
+				});
+				setForm((current) => {
+					if (current.file !== file) return current;
+					return {
+						...current,
+						title: current.title.trim() ? current.title : result.title || '',
+						author: current.author.trim() ? current.author : result.author || ''
+					};
+				});
+			})
+			.catch(() => {
+				if (cancelled) return;
+				setPreview({
+					status: 'ready',
+					coverUrl: null,
+					format: formatFromName(file.name),
+					pageCount: null
+				});
+				setForm((current) => {
+					if (current.file !== file) return current;
+					const stem = file.name.replace(/\.[^.]+$/, '') || 'Untitled';
+					return {
+						...current,
+						title: current.title.trim() ? current.title : stem
+					};
+				});
+			});
+		return () => {
+			cancelled = true;
+			if (coverUrl) URL.revokeObjectURL(coverUrl);
+		};
+	}, [editing, form.file]);
 
 	const submit = (e) => {
 		e.preventDefault();
 		if (editing) {
-			updateBook.mutate({ id: editing.id, title: form.title, author: form.author });
+			updateBook.mutate({
+				id: editing.id,
+				title: form.title,
+				author: form.author,
+				status: form.status
+			});
 			return;
 		}
 		if (!form.file) {
@@ -152,8 +223,7 @@ export default function BooksPage() {
 		}
 		const body = new FormData();
 		body.append('file', form.file);
-		const title = form.title.trim() || form.file.name.replace(/\.[^.]+$/, '');
-		body.append('title', title);
+		if (form.title.trim()) body.append('title', form.title.trim());
 		if (form.author.trim()) body.append('author', form.author.trim());
 		createBook.mutate(body);
 	};
@@ -161,86 +231,6 @@ export default function BooksPage() {
 	const setField = (key) => (e) => setForm((f) => ({ ...f, [key]: e.target.value }));
 	const saving = createBook.isPending || updateBook.isPending;
 	const openReader = (book) => navigate(`/books/${book.id}/read`);
-
-	const columns = useMemo(
-		() => [
-			{
-				key: 'title',
-				label: 'Title',
-				editable: true,
-				required: true,
-				className: 'w-[22%]'
-			},
-			{
-				key: 'author',
-				label: 'Author',
-				editable: true,
-				className: 'w-[14%]'
-			},
-			{
-				key: 'format',
-				label: 'Format',
-				getDisplay: (row) => formatLabel(row.format),
-				className: 'w-[8%]'
-			},
-			{
-				key: 'status',
-				label: 'Status',
-				type: 'select',
-				editable: true,
-				options: STATUS_SELECT,
-				render: (row) => (
-					<Badge tone={STATUS_TONE[row.status] || 'neutral'} className="capitalize">
-						{STATUS_LABELS[row.status] || row.status}
-					</Badge>
-				),
-				className: 'w-[12%]'
-			},
-			{
-				key: 'progress',
-				label: 'Progress',
-				render: (row) => (
-					<div className="min-w-[8rem]">
-						<ProgressBar value={row.progress_percent || 0} showLabel />
-						<p className="text-muted mt-1 text-xs">
-							{row.current_page || 0}/{row.page_count || 0} · {row.pages_left || 0} left
-						</p>
-					</div>
-				),
-				className: 'w-[16%]'
-			},
-			{
-				key: 'total_reading_seconds',
-				label: 'Time',
-				getDisplay: (row) => formatDurationSeconds(row.total_reading_seconds) || '0s',
-				sortKey: 'total_reading_seconds',
-				className: 'w-[10%]'
-			},
-			{
-				key: 'read',
-				label: '',
-				render: (row) => (
-					<Button size="sm" onClick={() => openReader(row)}>
-						Read
-					</Button>
-				),
-				className: 'w-[8%]'
-			},
-			{
-				key: 'actions',
-				label: '',
-				type: 'actions',
-				actions: ['info', 'delete'],
-				className: 'w-16'
-			}
-		],
-		[]
-	);
-
-	const tableColumns = useMemo(
-		() => columns.filter((col) => col.type !== 'actions' && col.key !== 'read'),
-		[columns]
-	);
 
 	return (
 		<div>
@@ -299,36 +289,19 @@ export default function BooksPage() {
 						</Button>
 					}
 				/>
-			) : mobile ? (
-				<Table
-					rows={books}
-					columns={tableColumns}
-					ordering={ordering}
-					defaultOrdering={DEFAULT_ORDERING}
-					onOrderingChange={setOrdering}
-					onRowClick={openReader}
-					emptyMessage="No books match these filters."
-					rowLabel={(row) => row.title || 'book'}
-				/>
 			) : (
-				<DataSheet
-					rows={books}
-					columns={columns}
-					ordering={ordering}
-					defaultOrdering={DEFAULT_ORDERING}
-					onOrderingChange={setOrdering}
-					onCommit={({ id, field, value, patch }) => {
-						updateBook.mutate({ id, ...(patch || { [field]: value }) });
-					}}
-					onAdd={openCreate}
-					onRequestDelete={(row) => removeBook.mutate(row.id)}
-					onRequestInfo={setInfoRow}
-					adding={createBook.isPending}
-					saving={updateBook.isPending}
-					addLabel="Upload book"
-					emptyMessage="No books match these filters."
-					rowLabel={(row) => row.title || 'book'}
-				/>
+				<div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+					{books.map((book) => (
+						<BookCard
+							key={book.id}
+							book={book}
+							onRead={openReader}
+							onEdit={openEdit}
+							onInfo={setInfoRow}
+							onDelete={(row) => removeBook.mutate(row.id)}
+						/>
+					))}
+				</div>
 			)}
 
 			<Pagination
@@ -390,23 +363,49 @@ export default function BooksPage() {
 							label="File"
 							type="file"
 							accept={ACCEPTED_BOOK_TYPES}
-							onChange={(e) => setForm((f) => ({ ...f, file: e.target.files?.[0] || null }))}
+							className="cursor-pointer"
+							onChange={(e) =>
+								setForm((f) => ({
+									...f,
+									file: e.target.files?.[0] || null,
+									title: '',
+									author: ''
+								}))
+							}
 							required
 						/>
 					)}
+					{!editing && form.file ? (
+						<UploadPreview
+							key={`${form.file.name}-${form.file.size}-${form.file.lastModified}`}
+							status={preview.status}
+							coverUrl={preview.coverUrl}
+							format={preview.format}
+							pageCount={preview.pageCount}
+						/>
+					) : null}
 					<Input
 						label="Title"
 						value={form.title}
 						onChange={setField('title')}
-						placeholder={editing ? 'Book title' : 'Optional — defaults to the filename'}
+						placeholder={editing ? 'Book title' : 'Optional — extracted from the book'}
 						required={Boolean(editing)}
 					/>
 					<Input
 						label="Author"
 						value={form.author}
 						onChange={setField('author')}
-						placeholder="Optional"
+						placeholder={editing ? 'Optional' : 'Optional — extracted from the book'}
 					/>
+					{editing && (
+						<Select label="Status" value={form.status} onChange={setField('status')}>
+							{STATUS_SELECT.map((opt) => (
+								<option key={opt.value} value={opt.value}>
+									{opt.label}
+								</option>
+							))}
+						</Select>
+					)}
 				</form>
 			</Modal>
 		</div>

@@ -19,6 +19,7 @@
     "pdfjs-dist": "^5.4.54",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
+    "react-reader": "^2.0.15",
     "react-router-dom": "^7.18.0",
     "zustand": "^5.0.14"
   },

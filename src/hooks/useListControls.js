@@ -2,7 +2,11 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 
 export const LIST_PAGE_SIZE = 10;
 
-export function useListControls({ defaultOrdering = '', defaultFilters = {} } = {}) {
+export function useListControls({
+	defaultOrdering = '',
+	defaultFilters = {},
+	pageSize = LIST_PAGE_SIZE
+} = {}) {
 	const [page, setPage] = useState(1);
 	const [search, setSearch] = useState('');
 	const [debouncedSearch, setDebouncedSearch] = useState('');
@@ -30,12 +34,12 @@ export function useListControls({ defaultOrdering = '', defaultFilters = {} } = 
 	const queryParams = useMemo(
 		() => ({
 			page,
-			page_size: LIST_PAGE_SIZE,
+			page_size: pageSize,
 			...(debouncedSearch ? { search: debouncedSearch } : {}),
 			...(ordering ? { ordering } : {}),
 			...filters
 		}),
-		[page, debouncedSearch, ordering, filters]
+		[page, debouncedSearch, ordering, filters, pageSize]
 	);
 
 	return {
@@ -49,7 +53,7 @@ export function useListControls({ defaultOrdering = '', defaultFilters = {} } = 
 		setFilter,
 		setFilters,
 		queryParams,
-		pageSize: LIST_PAGE_SIZE
+		pageSize
 	};
 }
 

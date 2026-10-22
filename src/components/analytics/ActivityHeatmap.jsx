@@ -237,7 +237,7 @@ const WEEKDAY_LABELS = ['', 'Mon', '', 'Wed', '', 'Fri', ''];
 
 /**
  * Full-range GitHub-style activity heatmap (horizontal scroll when needed).
- * Pass a contiguous daily timeline (e.g. 365 days from GET /books/activity/).
+ * Pass a contiguous daily timeline (e.g. 500 days from GET /books/activity/).
  */
 export function ActivityHeatmap({
 	timeline = [],

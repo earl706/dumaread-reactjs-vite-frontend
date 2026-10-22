@@ -1,10 +1,12 @@
+import { useNavigate } from 'react-router-dom';
 import { BookOpen, Clock, Layers, BookMarked } from 'lucide-react';
 
 import { useAuthStore } from '../stores/authStore';
 import { booksApi } from '../lib/resources';
 import { formatDurationSeconds } from '../lib/format';
 import { PageHeader } from '../components/layout/PageHeader';
-import { ActivityHeatmap, CompactActivityTile } from '../components/analytics/ActivityHeatmap';
+import { ActivityHeatmap } from '../components/analytics/ActivityHeatmap';
+import { RecentBookShortcut } from '../components/books/RecentBookShortcut';
 import { Card, CardBody, CardHeader, StatCard } from '../components/ui';
 
 function greeting() {
@@ -15,13 +17,21 @@ function greeting() {
 }
 
 export default function DashboardPage() {
+	const navigate = useNavigate();
 	const user = useAuthStore((s) => s.user);
 	const name = user?.full_name?.split(' ')[0] || 'there';
 
 	const { data: stats } = booksApi.useStats();
-	const { data: activity } = booksApi.useActivity({ days: 365 });
+	const { data: activity } = booksApi.useActivity({ days: 500 });
+	const { data: recent, isLoading: recentLoading } = booksApi.useList({
+		ordering: '-last_read_at',
+		last_read_at__isnull: false,
+		page_size: 5,
+		page: 1
+	});
 
 	const timeline = activity?.timeline || [];
+	const recentBooks = recent?.results || [];
 
 	const cards = [
 		{ icon: BookOpen, label: 'Books', value: stats?.total ?? '—', tone: 'primary' },
@@ -43,41 +53,36 @@ export default function DashboardPage() {
 				description="Your library at a glance — pages left and time well spent."
 			/>
 
-			<div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-				{cards.map((stat) => (
-					<StatCard key={stat.label} {...stat} />
-				))}
-			</div>
-
-			<div className="mt-6 grid grid-cols-1 gap-4 lg:grid-cols-2">
-				<Card>
-					<CardHeader title="Recent reading" subtitle="Minutes read over the last 12 weeks" />
-					<CardBody>
-						<CompactActivityTile timeline={timeline} weeks={12} emptyLabel="No reading yet" />
-					</CardBody>
-				</Card>
-
-				<Card>
-					<CardHeader title="Welcome to DumaRead" subtitle="Upload, read, and track in one place" />
-					<CardBody>
-						<p className="text-muted text-sm">
-							Add a PDF, EPUB, or TXT from <span className="text-fg font-medium">Library</span>,
-							then read it in the app. Progress uses real PDF pages and ~300-word pages for EPUB and
-							TXT. Time tracks automatically while the reader is open.
-						</p>
-					</CardBody>
-				</Card>
-			</div>
-
 			<Card className="mt-4">
-				<CardHeader
-					title="Reading this year"
-					subtitle="Full contribution grid from GET /books/activity/"
-				/>
+				<CardHeader title="Reading activity" />
 				<CardBody>
 					<ActivityHeatmap timeline={timeline} emptyLabel="No reading yet" />
 				</CardBody>
 			</Card>
+
+			{recentLoading || recentBooks.length ? (
+				<Card className="mt-4">
+					<CardHeader title="Recent Reads" />
+					<CardBody>
+						<div className="flex h-[150px] max-h-[150px] gap-4 overflow-x-auto">
+							{recentLoading
+								? Array.from({ length: 5 }, (_, i) => (
+										<div
+											key={i}
+											className="bg-surface-2 h-full w-[calc((100%-4rem)/5)] min-w-[5.5rem] shrink-0 animate-pulse rounded-md"
+										/>
+									))
+								: recentBooks.map((book) => (
+										<RecentBookShortcut
+											key={book.id}
+											book={book}
+											onOpen={() => navigate(`/books/${book.id}/read`)}
+										/>
+									))}
+						</div>
+					</CardBody>
+				</Card>
+			) : null}
 		</div>
 	);
 }

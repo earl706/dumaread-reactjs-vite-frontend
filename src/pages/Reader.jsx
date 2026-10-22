@@ -14,6 +14,7 @@ import {
 } from '../lib/reading';
 import { formatDurationSeconds } from '../lib/format';
 import { useReadingSession } from '../hooks/useReadingSession';
+import { EpubReader } from '../components/books/EpubReader';
 import { Button, EmptyState, LoadingScreen } from '../components/ui';
 
 GlobalWorkerOptions.workerSrc = pdfWorker;
@@ -172,45 +173,54 @@ export default function ReaderPage() {
 	const twoPage = useTwoPage();
 	const { data: book, isLoading, isError } = booksApi.useDetail(id);
 	const [page, setPage] = useState(null);
-	const [pdfBytes, setPdfBytes] = useState(null);
+	const [fileBytes, setFileBytes] = useState(null);
 	const [text, setText] = useState('');
 	const [loadError, setLoadError] = useState('');
 	const [contentReady, setContentReady] = useState(false);
 	const [textPages, setTextPages] = useState([[]]);
 	const [pagesReady, setPagesReady] = useState(false);
 	const [pageBox, setPageBox] = useState({ width: 0, height: 0 });
+	const [epubAtStart, setEpubAtStart] = useState(true);
+	const [epubAtEnd, setEpubAtEnd] = useState(false);
 	const spreadRef = useRef(null);
+	const epubRef = useRef(null);
 	const wordOffsetRef = useRef(0);
 	const sessionStartedAt = useRef(Date.now());
 	const [elapsed, setElapsed] = useState(0);
 
+	const isPdf = book?.format === 'pdf';
+	const isEpub = book?.format === 'epub';
+	const isTxt = book?.format === 'txt';
+
 	useEffect(() => {
 		if (!book) return;
-		if (book.format === 'pdf') {
-			setPage(book.current_page > 0 ? book.current_page : 1);
-			setPagesReady(true);
+		const start = book.current_page > 0 ? book.current_page : 1;
+		if (isPdf || isEpub) {
+			setPage(start);
+			setPagesReady(isPdf);
+			setEpubAtStart(start <= 1);
+			setEpubAtEnd(false);
 		} else {
-			wordOffsetRef.current = Math.max(
-				0,
-				((book.current_page > 0 ? book.current_page : 1) - 1) * WORDS_PER_PAGE
-			);
+			wordOffsetRef.current = Math.max(0, (start - 1) * WORDS_PER_PAGE);
 			setPage(null);
 			setPagesReady(false);
 			setTextPages([[]]);
 		}
-	}, [book?.id]);
+	}, [book?.id, isPdf, isEpub]);
 
 	useEffect(() => {
 		if (!book) return undefined;
 		let cancelled = false;
 		setContentReady(false);
 		setLoadError('');
+		setFileBytes(null);
+		setText('');
 		(async () => {
 			try {
-				if (book.format === 'pdf') {
+				if (isPdf || isEpub) {
 					const blob = await booksApi.fetchFile(book.id);
 					const buf = await blob.arrayBuffer();
-					if (!cancelled) setPdfBytes(buf);
+					if (!cancelled) setFileBytes(buf);
 				} else {
 					const payload = await booksApi.fetchText(book.id);
 					if (!cancelled) setText(payload.text || '');
@@ -223,19 +233,19 @@ export default function ReaderPage() {
 		return () => {
 			cancelled = true;
 		};
-	}, [book?.id, book?.format]);
+	}, [book?.id, isPdf, isEpub]);
 
-	const isPdf = book?.format === 'pdf';
-	const totalPages = isPdf ? book?.page_count || 1 : textPages.length || 1;
+	const totalPages = isPdf || isEpub ? book?.page_count || 1 : textPages.length || 1;
 	const currentPage = page == null ? 1 : Math.min(Math.max(page, 1), totalPages);
 	const turn = twoPage ? 2 : 1;
 	const leftPage = twoPage && currentPage % 2 === 0 ? currentPage - 1 : currentPage;
 	const rightPage = twoPage && leftPage + 1 <= totalPages ? leftPage + 1 : null;
-	const footerPage = rightPage || leftPage;
+	const footerPage = isEpub ? currentPage : rightPage || leftPage;
 	const pagesLeft = Math.max(0, totalPages - footerPage);
-	const trackedPage = isPdf
-		? footerPage
-		: backendPageFromVisual(textPages, footerPage, book?.page_count || 1);
+	const trackedPage =
+		isPdf || isEpub
+			? footerPage
+			: backendPageFromVisual(textPages, footerPage, book?.page_count || 1);
 
 	useReadingSession({
 		bookId: book?.id,
@@ -251,7 +261,7 @@ export default function ReaderPage() {
 	}, []);
 
 	useEffect(() => {
-		if (!contentReady || loadError) return undefined;
+		if (isPdf || isEpub || !contentReady || loadError) return undefined;
 		const root = spreadRef.current;
 		if (!root) return undefined;
 		const pageEl = root.querySelector('.reader-page');
@@ -267,10 +277,10 @@ export default function ReaderPage() {
 		const ro = new ResizeObserver(update);
 		ro.observe(pageEl);
 		return () => ro.disconnect();
-	}, [contentReady, loadError, twoPage, isPdf]);
+	}, [contentReady, loadError, twoPage, isPdf, isEpub]);
 
 	useEffect(() => {
-		if (isPdf || !text || pageBox.width < 40 || pageBox.height < 40) return undefined;
+		if (!isTxt || !text || pageBox.width < 40 || pageBox.height < 40) return undefined;
 		let cancelled = false;
 		const run = () => {
 			if (cancelled) return;
@@ -286,24 +296,36 @@ export default function ReaderPage() {
 		return () => {
 			cancelled = true;
 		};
-	}, [isPdf, text, pageBox.width, pageBox.height]);
+	}, [isTxt, text, pageBox.width, pageBox.height]);
 
 	const go = useCallback(
 		(next) => {
 			const clamped = Math.min(Math.max(next, 1), totalPages);
 			setPage(clamped);
-			if (!isPdf) {
+			if (isTxt) {
 				const left = twoPage && clamped % 2 === 0 ? clamped - 1 : clamped;
 				wordOffsetRef.current = wordOffsetAtPage(textPages, left);
 			}
 		},
-		[totalPages, isPdf, twoPage, textPages]
+		[totalPages, isTxt, twoPage, textPages]
 	);
 
-	const goPrev = useCallback(() => go(leftPage - turn), [go, leftPage, turn]);
-	const goNext = useCallback(() => go(leftPage + turn), [go, leftPage, turn]);
-	const canPrev = leftPage > 1;
-	const canNext = footerPage < totalPages;
+	const goPrev = useCallback(() => {
+		if (isEpub) {
+			epubRef.current?.prev();
+			return;
+		}
+		go(leftPage - turn);
+	}, [go, isEpub, leftPage, turn]);
+	const goNext = useCallback(() => {
+		if (isEpub) {
+			epubRef.current?.next();
+			return;
+		}
+		go(leftPage + turn);
+	}, [go, isEpub, leftPage, turn]);
+	const canPrev = isEpub ? !epubAtStart : leftPage > 1;
+	const canNext = isEpub ? !epubAtEnd : footerPage < totalPages;
 
 	useEffect(() => {
 		const onKey = (e) => {
@@ -348,7 +370,12 @@ export default function ReaderPage() {
 		);
 	}
 
-	const spreadClass = twoPage ? 'reader-spread' : 'reader-spread reader-spread-single';
+	const spreadClass = isEpub
+		? 'reader-spread reader-spread-epub'
+		: twoPage
+			? 'reader-spread'
+			: 'reader-spread reader-spread-single';
+	const footerSplit = twoPage && rightPage && !isEpub;
 
 	return (
 		<div className="reader-shell relative flex h-full min-h-screen flex-col">
@@ -389,12 +416,26 @@ export default function ReaderPage() {
 							<LoadingScreen label="Loading pages…" />
 						) : (
 							<div ref={spreadRef} className={spreadClass}>
-								{book.format === 'pdf' ? (
+								{isPdf ? (
 									<PdfSpread
-										data={pdfBytes}
+										data={fileBytes}
 										leftPage={leftPage}
 										rightPage={rightPage}
 										twoPage={twoPage}
+									/>
+								) : isEpub ? (
+									<EpubReader
+										ref={epubRef}
+										data={fileBytes}
+										twoPage={twoPage}
+										pageCount={book.page_count || 1}
+										initialPage={book.current_page > 0 ? book.current_page : 1}
+										onPageChange={setPage}
+										onBoundsChange={({ atStart, atEnd }) => {
+											setEpubAtStart(atStart);
+											setEpubAtEnd(atEnd);
+										}}
+										onReady={() => setPagesReady(true)}
 									/>
 								) : (
 									<TextSpread
@@ -409,10 +450,10 @@ export default function ReaderPage() {
 					</main>
 					<footer
 						className={`shrink-0 pt-2 pb-5 text-[12px] text-[#8a8a8a] ${
-							twoPage && rightPage ? 'grid grid-cols-2' : 'flex justify-between'
+							footerSplit ? 'grid grid-cols-2' : 'flex justify-between'
 						}`}
 					>
-						<p className={twoPage && rightPage ? 'text-center' : ''}>
+						<p className={footerSplit ? 'text-center' : ''}>
 							{footerPage} of {totalPages}
 						</p>
 						<p className="text-right">
