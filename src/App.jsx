@@ -6,8 +6,10 @@ import { useAuthStore } from './stores/authStore';
 import { useThemeStore } from './stores/themeStore';
 import { AppLayout } from './components/layout/AppLayout';
 import { ProtectedRoute } from './components/layout/ProtectedRoute';
+import { TimerEngine } from './components/layout/TimerEngine';
 import { LoadingScreen, Toasts } from './components/ui';
 import { publicRoutes, appRoutes, readerRoutes } from './pages/routes';
+import { readingTimer } from './stores/readingTimer';
 
 function ThemedSuspense({ children }) {
 	return <Suspense fallback={<LoadingScreen />}>{children}</Suspense>;
@@ -15,6 +17,7 @@ function ThemedSuspense({ children }) {
 
 export default function App() {
 	const bootstrap = useAuthStore((s) => s.bootstrap);
+	const authStatus = useAuthStore((s) => s.status);
 	const initTheme = useThemeStore((s) => s.init);
 	useEffect(() => {
 		initTheme();
@@ -59,6 +62,7 @@ export default function App() {
 					</Routes>
 				</ThemedSuspense>
 			</BrowserRouter>
+			{authStatus === 'authenticated' && <TimerEngine timer={readingTimer} />}
 			<Toasts />
 		</QueryClientProvider>
 	);

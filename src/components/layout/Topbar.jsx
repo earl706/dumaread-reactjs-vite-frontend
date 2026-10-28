@@ -2,9 +2,11 @@ import { useNavigate } from 'react-router-dom';
 import { Menu, Search } from 'lucide-react';
 
 import { useAuthStore } from '../../stores/authStore';
+import { readingTimer } from '../../stores/readingTimer';
 import { useUIStore } from '../../stores/uiStore';
 import { Avatar, Button } from '../ui';
 import { ThemeToggle } from './ThemeToggle';
+import { TimerButton } from './TimerButton';
 
 export function Topbar() {
 	const navigate = useNavigate();
@@ -35,6 +37,7 @@ export function Topbar() {
 			</button>
 
 			<div className="flex flex-1 items-center justify-end gap-1">
+				<TimerButton timer={readingTimer} />
 				<ThemeToggle />
 				<button
 					onClick={() => navigate('/settings')}

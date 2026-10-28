@@ -1,4 +1,5 @@
 import { useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { AnimatePresence, motion } from 'framer-motion';
 import { X } from 'lucide-react';
 
@@ -9,6 +10,8 @@ import { Button } from './Button';
  * - Closes on Escape and backdrop click.
  * - Locks body scroll while open.
  * - role="dialog" + aria-modal for screen readers.
+ * - Portals to document.body so ancestors with backdrop-filter / overflow
+ *   (e.g. the Topbar) cannot clip or re-contain `position: fixed`.
  */
 export function Modal({ open, onClose, title, children, footer, size = 'md' }) {
 	useEffect(() => {
@@ -24,7 +27,9 @@ export function Modal({ open, onClose, title, children, footer, size = 'md' }) {
 
 	const widths = { sm: 'max-w-sm', md: 'max-w-lg', lg: 'max-w-2xl', xl: 'max-w-4xl' };
 
-	return (
+	if (typeof document === 'undefined') return null;
+
+	return createPortal(
 		<AnimatePresence>
 			{open && (
 				<motion.div
@@ -61,6 +66,7 @@ export function Modal({ open, onClose, title, children, footer, size = 'md' }) {
 					</motion.div>
 				</motion.div>
 			)}
-		</AnimatePresence>
+		</AnimatePresence>,
+		document.body
 	);
 }
