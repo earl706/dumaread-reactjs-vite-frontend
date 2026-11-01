@@ -85,6 +85,38 @@ body {
   padding-left: env(safe-area-inset-left);
 }
 
+/* Pointer cursor on every interactive control (overrides UA / Tailwind preflight). */
+:where(
+  a[href],
+  area[href],
+  button:not(:disabled),
+  summary,
+  label[for],
+  select:not(:disabled),
+  input[type='button']:not(:disabled),
+  input[type='submit']:not(:disabled),
+  input[type='reset']:not(:disabled),
+  input[type='checkbox']:not(:disabled),
+  input[type='radio']:not(:disabled),
+  input[type='file']:not(:disabled),
+  input[type='image']:not(:disabled),
+  [role='button']:not([aria-disabled='true']),
+  [role='link']:not([aria-disabled='true']),
+  [role='tab']:not([aria-disabled='true']),
+  [role='menuitem']:not([aria-disabled='true']),
+  [role='option']:not([aria-disabled='true']),
+  [role='switch']:not([aria-disabled='true']),
+  [role='checkbox']:not([aria-disabled='true']),
+  [role='radio']:not([aria-disabled='true']),
+  [role='combobox']:not([aria-disabled='true'])
+) {
+  cursor: pointer;
+}
+
+:where(button:disabled, select:disabled, input:disabled, [aria-disabled='true']) {
+  cursor: default;
+}
+
 /* Respect users who prefer reduced motion (accessibility). */
 @media (prefers-reduced-motion: reduce) {
   *,
@@ -187,6 +219,21 @@ html.reader-lock .reader-shell {
   grid-template-columns: minmax(0, 1fr);
   column-gap: 0;
   width: 100%;
+}
+
+/* Subtle dissolve when navigating (class restarted from Reader.jsx). */
+@keyframes reader-turn-fade {
+  from {
+    opacity: 0.55;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.reader-spread.reader-turn-next,
+.reader-spread.reader-turn-prev {
+  animation: reader-turn-fade 300ms ease-out;
 }
 
 .reader-epub {

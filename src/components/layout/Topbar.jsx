@@ -1,10 +1,11 @@
 import { useNavigate } from 'react-router-dom';
 import { Menu, Search } from 'lucide-react';
 
+import { booksApi } from '../../lib/resources';
 import { useAuthStore } from '../../stores/authStore';
 import { readingTimer } from '../../stores/readingTimer';
 import { useUIStore } from '../../stores/uiStore';
-import { Avatar, Button } from '../ui';
+import { Avatar, Button, GoalProgressRings } from '../ui';
 import { ThemeToggle } from './ThemeToggle';
 import { TimerButton } from './TimerButton';
 
@@ -12,6 +13,10 @@ export function Topbar() {
 	const navigate = useNavigate();
 	const user = useAuthStore((s) => s.user);
 	const { toggleSidebar, openPalette } = useUIStore();
+	const { data: stats } = booksApi.useStats({
+		enabled: Boolean(user),
+		refetchInterval: 60_000
+	});
 
 	return (
 		<header className="border-line bg-surface/80 sticky top-0 z-30 flex h-16 items-center gap-2 border-b px-4 backdrop-blur">
@@ -37,6 +42,15 @@ export function Topbar() {
 			</button>
 
 			<div className="flex flex-1 items-center justify-end gap-1">
+				<GoalProgressRings
+					progress={stats?.goal_progress}
+					size={36}
+					stroke={3}
+					gap={2}
+					variant="surface"
+					title="Reading goals"
+					className="mr-1"
+				/>
 				<TimerButton timer={readingTimer} />
 				<ThemeToggle />
 				<button

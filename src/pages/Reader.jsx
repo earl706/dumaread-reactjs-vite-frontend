@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, ChevronLeft, ChevronRight } from 'lucide-react';
+import { ArrowLeft, Bookmark, ChevronLeft, ChevronRight, Maximize2, Minimize2 } from 'lucide-react';
 import { getDocument, GlobalWorkerOptions } from 'pdfjs-dist';
 import pdfWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 
@@ -13,11 +13,40 @@ import {
 	wordOffsetAtPage
 } from '../lib/reading';
 import { formatDurationSeconds } from '../lib/format';
+import { formatTimerDisplay } from '../lib/timerFormat';
+import { toast } from '../stores/toastStore';
+import { selectIntervalActive } from '../stores/createTimerStore';
+import { readingTimer } from '../stores/readingTimer';
 import { useReadingSession } from '../hooks/useReadingSession';
 import { EpubReader } from '../components/books/EpubReader';
-import { Button, EmptyState, LoadingScreen } from '../components/ui';
+import { Button, EmptyState, LoadingScreen, ProgressRing } from '../components/ui';
 
 GlobalWorkerOptions.workerSrc = pdfWorker;
+
+function getFullscreenElement() {
+	return document.fullscreenElement || document.webkitFullscreenElement || null;
+}
+
+async function enterFullscreen(el) {
+	if (!el) return;
+	if (el.requestFullscreen) {
+		await el.requestFullscreen();
+		return;
+	}
+	if (el.webkitRequestFullscreen) {
+		await el.webkitRequestFullscreen();
+	}
+}
+
+async function exitFullscreen() {
+	if (document.exitFullscreen) {
+		await document.exitFullscreen();
+		return;
+	}
+	if (document.webkitExitFullscreen) {
+		await document.webkitExitFullscreen();
+	}
+}
 
 function useTwoPage() {
 	const [twoPage, setTwoPage] = useState(() =>
@@ -173,6 +202,20 @@ export default function ReaderPage() {
 	const navigate = useNavigate();
 	const twoPage = useTwoPage();
 	const { data: book, isLoading, isError } = booksApi.useDetail(id);
+	const bookmarkBook = booksApi.useBookmark({
+		onSuccess: (data) => {
+			toast.success(
+				data?.bookmark_page ? `Bookmarked page ${data.bookmark_page}.` : 'Bookmark removed.'
+			);
+		},
+		onError: () => toast.error('Could not update bookmark.')
+	});
+
+	const timerSessionActive = readingTimer.useStore(selectIntervalActive);
+	const timerRemaining = readingTimer.useStore((s) => s.remainingSeconds);
+	const timerTotal = readingTimer.useStore((s) => s.totalSeconds);
+	const timerRemainingPct = timerTotal > 0 ? (timerRemaining / timerTotal) * 100 : 0;
+	const timerDisplay = formatTimerDisplay(timerRemaining);
 
 	useEffect(() => {
 		const root = document.documentElement;
@@ -189,11 +232,38 @@ export default function ReaderPage() {
 	const [pageBox, setPageBox] = useState({ width: 0, height: 0 });
 	const [epubAtStart, setEpubAtStart] = useState(true);
 	const [epubAtEnd, setEpubAtEnd] = useState(false);
+	const shellRef = useRef(null);
 	const spreadRef = useRef(null);
 	const epubRef = useRef(null);
 	const wordOffsetRef = useRef(0);
 	const sessionStartedAt = useRef(Date.now());
 	const [elapsed, setElapsed] = useState(0);
+	const [isFullscreen, setIsFullscreen] = useState(false);
+
+	useEffect(() => {
+		const sync = () => {
+			const active = getFullscreenElement();
+			setIsFullscreen(Boolean(active && active === shellRef.current));
+		};
+		document.addEventListener('fullscreenchange', sync);
+		document.addEventListener('webkitfullscreenchange', sync);
+		return () => {
+			document.removeEventListener('fullscreenchange', sync);
+			document.removeEventListener('webkitfullscreenchange', sync);
+		};
+	}, []);
+
+	const toggleFullscreen = useCallback(async () => {
+		try {
+			if (getFullscreenElement()) {
+				await exitFullscreen();
+			} else {
+				await enterFullscreen(shellRef.current);
+			}
+		} catch {
+			toast.error('Fullscreen is not available here.');
+		}
+	}, []);
 
 	const isPdf = book?.format === 'pdf';
 	const isEpub = book?.format === 'epub';
@@ -201,7 +271,8 @@ export default function ReaderPage() {
 
 	useEffect(() => {
 		if (!book) return;
-		const start = book.current_page > 0 ? book.current_page : 1;
+		const start =
+			book.bookmark_page > 0 ? book.bookmark_page : book.current_page > 0 ? book.current_page : 1;
 		if (isPdf || isEpub) {
 			setPage(start);
 			setPagesReady(isPdf);
@@ -248,11 +319,14 @@ export default function ReaderPage() {
 	const leftPage = twoPage && currentPage % 2 === 0 ? currentPage - 1 : currentPage;
 	const rightPage = twoPage && leftPage + 1 <= totalPages ? leftPage + 1 : null;
 	const footerPage = isEpub ? currentPage : rightPage || leftPage;
-	const pagesLeft = Math.max(0, totalPages - footerPage);
 	const trackedPage =
 		isPdf || isEpub
 			? footerPage
 			: backendPageFromVisual(textPages, footerPage, book?.page_count || 1);
+	const libraryTotal = Math.max(1, book?.page_count || 1);
+	const libraryPage = Math.min(Math.max(trackedPage || 1, 1), libraryTotal);
+	const progressPercent = Math.round((100 * libraryPage) / libraryTotal);
+	const pagesLeft = Math.max(0, libraryTotal - libraryPage);
 
 	useReadingSession({
 		bookId: book?.id,
@@ -317,37 +391,51 @@ export default function ReaderPage() {
 		[totalPages, isTxt, twoPage, textPages]
 	);
 
+	const playPageTurn = useCallback((dir) => {
+		const el = spreadRef.current;
+		if (!el) return;
+		el.classList.remove('reader-turn-next', 'reader-turn-prev');
+		void el.offsetWidth;
+		el.classList.add(dir > 0 ? 'reader-turn-next' : 'reader-turn-prev');
+	}, []);
+
 	const goPrev = useCallback(() => {
+		playPageTurn(-1);
 		if (isEpub) {
 			epubRef.current?.prev();
 			return;
 		}
 		go(leftPage - turn);
-	}, [go, isEpub, leftPage, turn]);
+	}, [go, isEpub, leftPage, playPageTurn, turn]);
 	const goNext = useCallback(() => {
+		playPageTurn(1);
 		if (isEpub) {
 			epubRef.current?.next();
 			return;
 		}
 		go(leftPage + turn);
-	}, [go, isEpub, leftPage, turn]);
+	}, [go, isEpub, leftPage, playPageTurn, turn]);
 	const canPrev = isEpub ? !epubAtStart : leftPage > 1;
 	const canNext = isEpub ? !epubAtEnd : footerPage < totalPages;
 
 	useEffect(() => {
 		const onKey = (e) => {
+			const typing =
+				e.target instanceof HTMLInputElement ||
+				e.target instanceof HTMLTextAreaElement ||
+				(e.target instanceof HTMLElement && e.target.isContentEditable);
 			if (e.key === 'Escape') {
 				e.preventDefault();
 				navigate('/library');
 				return;
 			}
+			if (typing || e.metaKey || e.ctrlKey || e.altKey) return;
+			if (e.key === 'f' || e.key === 'F') {
+				e.preventDefault();
+				toggleFullscreen();
+				return;
+			}
 			if (e.key === 'ArrowRight' || e.key === 'PageDown' || e.key === ' ') {
-				if (
-					e.key === ' ' &&
-					(e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement)
-				) {
-					return;
-				}
 				e.preventDefault();
 				if (canNext) goNext();
 			} else if (e.key === 'ArrowLeft' || e.key === 'PageUp') {
@@ -357,7 +445,7 @@ export default function ReaderPage() {
 		};
 		window.addEventListener('keydown', onKey);
 		return () => window.removeEventListener('keydown', onKey);
-	}, [canNext, canPrev, goNext, goPrev, navigate]);
+	}, [canNext, canPrev, goNext, goPrev, navigate, toggleFullscreen]);
 
 	if (isLoading) {
 		return (
@@ -388,9 +476,23 @@ export default function ReaderPage() {
 			? 'reader-spread'
 			: 'reader-spread reader-spread-single';
 	const footerSplit = twoPage && rightPage && !isEpub;
+	const bookmarkPage = book.bookmark_page > 0 ? book.bookmark_page : null;
+	const hasBookmark = bookmarkPage != null;
+	const onBookmarkedPage =
+		hasBookmark &&
+		(libraryPage === bookmarkPage ||
+			(twoPage && !isEpub && (leftPage === bookmarkPage || rightPage === bookmarkPage)));
+	const toggleBookmark = () => {
+		if (bookmarkBook.isPending || page == null) return;
+		if (hasBookmark) {
+			bookmarkBook.mutate({ id: book.id, page: null });
+			return;
+		}
+		bookmarkBook.mutate({ id: book.id, page: trackedPage });
+	};
 
 	return (
-		<div className="reader-shell relative flex flex-col">
+		<div ref={shellRef} className="reader-shell relative flex flex-col">
 			<header className="relative shrink-0 px-16 pt-5 pb-2">
 				<Link
 					to="/library"
@@ -403,12 +505,62 @@ export default function ReaderPage() {
 				<p className="font-reader truncate text-center text-[12px] tracking-wide text-[#9a9a9a]">
 					{book.title}
 				</p>
-				<p className="absolute top-5 right-5 hidden text-[11px] text-[#6e6e6e] sm:block">
-					{formatDurationSeconds(elapsed)}
-					{book.total_reading_seconds
-						? ` · ${formatDurationSeconds(book.total_reading_seconds)} total`
-						: ''}
-				</p>
+				<div className="absolute top-5 right-5 flex items-center gap-3">
+					<p className="hidden text-[11px] text-[#6e6e6e] sm:block">
+						{formatDurationSeconds(elapsed)}
+						{book.total_reading_seconds
+							? ` · ${formatDurationSeconds(book.total_reading_seconds)} total`
+							: ''}
+					</p>
+					{timerSessionActive ? (
+						<div
+							className="inline-flex items-center justify-center"
+							role="img"
+							aria-label={`Reading timer ${timerDisplay} remaining`}
+							title={`Reading timer ${timerDisplay} remaining`}
+						>
+							<ProgressRing
+								value={timerRemainingPct}
+								size={28}
+								stroke={3}
+								tone="primary"
+								label=""
+							/>
+						</div>
+					) : null}
+					<button
+						type="button"
+						className={`inline-flex items-center justify-center disabled:opacity-50 ${
+							onBookmarkedPage ? 'text-primary' : 'reader-nav'
+						}`}
+						style={onBookmarkedPage ? { color: 'var(--primary)' } : undefined}
+						onClick={toggleBookmark}
+						disabled={bookmarkBook.isPending || page == null}
+						aria-label={
+							hasBookmark
+								? onBookmarkedPage
+									? 'Remove bookmark from this page'
+									: `Bookmark on page ${bookmarkPage}; click to remove`
+								: 'Bookmark this page'
+						}
+						aria-pressed={onBookmarkedPage}
+						title={
+							hasBookmark
+								? onBookmarkedPage
+									? `Bookmarked (page ${bookmarkPage})`
+									: `Bookmark on page ${bookmarkPage}`
+								: 'Bookmark this page'
+						}
+					>
+						<Bookmark
+							size={18}
+							strokeWidth={onBookmarkedPage ? 2 : 1.5}
+							absoluteStrokeWidth
+							fill={onBookmarkedPage ? 'var(--primary)' : 'none'}
+							color={onBookmarkedPage ? 'var(--primary)' : 'currentColor'}
+						/>
+					</button>
+				</div>
 			</header>
 
 			<div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
@@ -443,7 +595,13 @@ export default function ReaderPage() {
 										data={fileBytes}
 										twoPage={twoPage}
 										pageCount={book.page_count || 1}
-										initialPage={book.current_page > 0 ? book.current_page : 1}
+										initialPage={
+											book.bookmark_page > 0
+												? book.bookmark_page
+												: book.current_page > 0
+													? book.current_page
+													: 1
+										}
 										onPageChange={setPage}
 										onBoundsChange={({ atStart, atEnd }) => {
 											setEpubAtStart(atStart);
@@ -468,7 +626,8 @@ export default function ReaderPage() {
 						}`}
 					>
 						<p className={footerSplit ? 'text-center' : ''}>
-							{footerPage} of {totalPages}
+							{libraryPage} of {libraryTotal}
+							<span className="text-[#6e6e6e]"> · {progressPercent}%</span>
 						</p>
 						<p className="text-right">
 							{pagesLeft} page{pagesLeft === 1 ? '' : 's'} left
@@ -486,6 +645,21 @@ export default function ReaderPage() {
 					<ChevronRight size={28} strokeWidth={1.5} />
 				</button>
 			</div>
+
+			<button
+				type="button"
+				className="reader-nav absolute right-4 bottom-4 z-20 inline-flex h-9 w-9 items-center justify-center rounded-md"
+				onClick={toggleFullscreen}
+				aria-label={isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}
+				aria-pressed={isFullscreen}
+				title={isFullscreen ? 'Exit fullscreen (F)' : 'Fullscreen (F)'}
+			>
+				{isFullscreen ? (
+					<Minimize2 size={16} strokeWidth={1.5} />
+				) : (
+					<Maximize2 size={16} strokeWidth={1.5} />
+				)}
+			</button>
 		</div>
 	);
 }

@@ -218,7 +218,8 @@ export const EpubReader = forwardRef(function EpubReader(
 	const bookRef = useRef(null);
 	const locationsReadyRef = useRef(false);
 	const resumeAppliedRef = useRef(false);
-	const userMovedRef = useRef(false);
+	const resumePendingRef = useRef(false);
+	const pendingNavRef = useRef(null);
 	const lastCfiRef = useRef('');
 	const pageCountRef = useRef(pageCount);
 	const initialPageRef = useRef(initialPage);
@@ -233,39 +234,61 @@ export const EpubReader = forwardRef(function EpubReader(
 	onBoundsChangeRef.current = onBoundsChange;
 	onReadyRef.current = onReady;
 
-	useImperativeHandle(ref, () => ({
-		next: () => {
-			userMovedRef.current = true;
-			renditionRef.current?.next();
-		},
-		prev: () => {
-			userMovedRef.current = true;
-			renditionRef.current?.prev();
+	const flushPendingNav = useCallback(() => {
+		const pending = pendingNavRef.current;
+		pendingNavRef.current = null;
+		if (pending === 'next') renditionRef.current?.next();
+		if (pending === 'prev') renditionRef.current?.prev();
+	}, []);
+
+	const requestNav = useCallback((dir) => {
+		if (!resumeAppliedRef.current) {
+			pendingNavRef.current = dir;
+			return;
 		}
-	}));
+		if (dir === 'next') renditionRef.current?.next();
+		else renditionRef.current?.prev();
+	}, []);
+
+	useImperativeHandle(
+		ref,
+		() => ({
+			next: () => requestNav('next'),
+			prev: () => requestNav('prev')
+		}),
+		[requestNav]
+	);
 
 	const reportPage = useCallback((cfi) => {
-		if (!cfi || !locationsReadyRef.current) return;
+		if (!cfi || !locationsReadyRef.current || !resumeAppliedRef.current) return;
 		const page = pageFromCfi(bookRef.current, cfi, pageCountRef.current);
 		if (page != null) onPageChangeRef.current?.(page);
 	}, []);
 
+	const markResumeDone = useCallback(() => {
+		if (resumeAppliedRef.current) return;
+		resumePendingRef.current = false;
+		resumeAppliedRef.current = true;
+		flushPendingNav();
+	}, [flushPendingNav]);
+
 	const applyResume = useCallback(() => {
-		if (resumeAppliedRef.current || !locationsReadyRef.current) return;
-		if (userMovedRef.current) {
-			resumeAppliedRef.current = true;
-			return;
-		}
+		if (resumeAppliedRef.current || resumePendingRef.current || !locationsReadyRef.current) return;
 		const count = Math.max(1, pageCountRef.current || 1);
 		const start = clampPage(initialPageRef.current || 1, count);
 		if (start <= 1) {
-			resumeAppliedRef.current = true;
+			markResumeDone();
 			return;
 		}
 		const cfi = bookRef.current?.locations.cfiFromPercentage((start - 1) / count);
-		resumeAppliedRef.current = true;
-		if (cfi) setLocation(cfi);
-	}, []);
+		if (!cfi) {
+			markResumeDone();
+			return;
+		}
+		lastCfiRef.current = '';
+		resumePendingRef.current = true;
+		setLocation(cfi);
+	}, [markResumeDone]);
 
 	const getRendition = useCallback(
 		(rendition) => {
@@ -273,16 +296,17 @@ export const EpubReader = forwardRef(function EpubReader(
 			bookRef.current = rendition.book;
 			locationsReadyRef.current = false;
 			resumeAppliedRef.current = false;
+			resumePendingRef.current = false;
+			pendingNavRef.current = null;
+			lastCfiRef.current = '';
 			rendition.spread(twoPage ? 'always' : 'none', 0);
 			applyRenditionTheme(rendition);
 			rendition.hooks.content.register(injectContentStyles);
 			rendition.on('keyup', (event) => {
 				if (event.key === 'ArrowRight' || event.key === 'PageDown') {
-					userMovedRef.current = true;
-					rendition.next();
+					requestNav('next');
 				} else if (event.key === 'ArrowLeft' || event.key === 'PageUp') {
-					userMovedRef.current = true;
-					rendition.prev();
+					requestNav('prev');
 				}
 			});
 			rendition.on('relocated', (loc) => {
@@ -293,6 +317,11 @@ export const EpubReader = forwardRef(function EpubReader(
 				const cfi = loc.start?.cfi;
 				if (!cfi) return;
 				lastCfiRef.current = cfi;
+				if (resumePendingRef.current) {
+					markResumeDone();
+					reportPage(cfi);
+					return;
+				}
 				reportPage(cfi);
 			});
 			const book = rendition.book;
@@ -301,14 +330,14 @@ export const EpubReader = forwardRef(function EpubReader(
 				.then(() => {
 					locationsReadyRef.current = true;
 					applyResume();
-					if (lastCfiRef.current) reportPage(lastCfiRef.current);
 					onReadyRef.current?.();
 				})
 				.catch(() => {
+					markResumeDone();
 					onReadyRef.current?.();
 				});
 		},
-		[applyResume, reportPage, twoPage]
+		[applyResume, markResumeDone, reportPage, requestNav, twoPage]
 	);
 
 	useEffect(() => {

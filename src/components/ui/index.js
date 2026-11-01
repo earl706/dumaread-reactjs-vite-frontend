@@ -5,7 +5,7 @@ export { STATUS_TONE } from '../../lib/status';
 export { Input, Textarea, Select } from './Field';
 export { Modal } from './Modal';
 export { LoadingScreen, Skeleton, EmptyState } from './feedback';
-export { ProgressBar, ProgressRing } from './Progress';
+export { ProgressBar, ProgressRing, GoalProgressRings } from './Progress';
 export { Toasts } from './Toasts';
 export { StatCard } from './StatCard';
 export { Avatar } from './Avatar';

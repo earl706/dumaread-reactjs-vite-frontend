@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { createResourceHooks } from '../hooks/useResource';
-import { get, getBlob, post } from './api';
+import { del, get, getBlob, post } from './api';
 
 const booksHooks = createResourceHooks('books', '/books/');
 
@@ -24,16 +24,38 @@ export const booksApi = {
 	},
 	useHeartbeat(options = {}) {
 		const qc = useQueryClient();
+		const { onSuccess, onError, ...rest } = options;
 		return useMutation({
 			mutationFn: ({ id, current_page, seconds }) =>
 				post(`${booksHooks.basePath}${id}/heartbeat/`, { current_page, seconds }),
-			onSuccess: (data, vars) => {
+			onSuccess: (data, vars, ctx) => {
 				qc.invalidateQueries({ queryKey: [booksHooks.key] });
 				if (vars?.id && data) {
 					qc.setQueryData(booksHooks.detailKey(vars.id), data);
 				}
+				onSuccess?.(data, vars, ctx);
 			},
-			...options
+			onError,
+			...rest
+		});
+	},
+	useBookmark(options = {}) {
+		const qc = useQueryClient();
+		const { onSuccess, onError, ...rest } = options;
+		return useMutation({
+			mutationFn: ({ id, page }) => {
+				if (page == null) return del(`${booksHooks.basePath}${id}/bookmark/`);
+				return post(`${booksHooks.basePath}${id}/bookmark/`, { page });
+			},
+			onSuccess: (data, vars, ctx) => {
+				qc.invalidateQueries({ queryKey: [booksHooks.key] });
+				if (vars?.id && data) {
+					qc.setQueryData(booksHooks.detailKey(vars.id), data);
+				}
+				onSuccess?.(data, vars, ctx);
+			},
+			onError,
+			...rest
 		});
 	},
 	fetchFile(id) {

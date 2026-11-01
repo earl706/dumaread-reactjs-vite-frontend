@@ -5,12 +5,20 @@ import { BookOpen, Plus } from 'lucide-react';
 import { booksApi } from '../lib/resources';
 import { ACCEPTED_BOOK_TYPES, MAX_BOOK_BYTES, formatLabel } from '../lib/reading';
 import { formatFromName, previewBookFile } from '../lib/bookPreview';
+import {
+	emptyGoalForm,
+	exceedingGoalPeriods,
+	goalFormFromRecord,
+	parseGoalForm
+} from '../lib/readingGoals';
 import { STATUS_LABELS } from '../lib/status';
 import { formatDate, formatDurationSeconds } from '../lib/format';
 import { toast } from '../stores/toastStore';
+import { useAuthStore } from '../stores/authStore';
 import { useListControls } from '../hooks/useListControls';
 import { PageHeader } from '../components/layout/PageHeader';
 import { BookCard } from '../components/books/BookCard';
+import { ReadingGoalsFields } from '../components/books/ReadingGoalsFields';
 import { UploadPreview } from '../components/books/UploadPreview';
 import {
 	Button,
@@ -80,6 +88,7 @@ function errorMessage(err, fallback) {
 
 export default function BooksPage() {
 	const navigate = useNavigate();
+	const user = useAuthStore((s) => s.user);
 	const {
 		search,
 		setSearch,
@@ -99,6 +108,10 @@ export default function BooksPage() {
 	const [editing, setEditing] = useState(null);
 	const [infoRow, setInfoRow] = useState(null);
 	const [deleting, setDeleting] = useState(null);
+	const [goalsBook, setGoalsBook] = useState(null);
+	const [goalForm, setGoalForm] = useState(emptyGoalForm);
+	const [pendingGoals, setPendingGoals] = useState(null);
+	const [exceededPeriods, setExceededPeriods] = useState([]);
 	const [form, setForm] = useState(EMPTY_FORM);
 	const [preview, setPreview] = useState(EMPTY_PREVIEW);
 
@@ -114,6 +127,13 @@ export default function BooksPage() {
 			toast.success('Book updated.');
 			closeModal();
 		}
+	});
+	const updateGoals = booksApi.useUpdate({
+		onSuccess: () => {
+			toast.success('Reading goals saved.');
+			closeGoalsModal();
+		},
+		onError: (err) => toast.error(errorMessage(err, 'Could not save reading goals.'))
 	});
 	const removeBook = booksApi.useRemove({
 		onSuccess: () => {
@@ -145,6 +165,38 @@ export default function BooksPage() {
 		setEditing(null);
 		setForm(EMPTY_FORM);
 		setPreview(EMPTY_PREVIEW);
+	};
+
+	const openGoals = (book) => {
+		setGoalsBook(book);
+		setGoalForm(goalFormFromRecord(book));
+		setPendingGoals(null);
+		setExceededPeriods([]);
+	};
+
+	const closeGoalsModal = () => {
+		if (updateGoals.isPending) return;
+		setGoalsBook(null);
+		setGoalForm(emptyGoalForm());
+		setPendingGoals(null);
+		setExceededPeriods([]);
+	};
+
+	const saveGoals = (goals) => {
+		if (!goalsBook) return;
+		updateGoals.mutate({ id: goalsBook.id, ...goals });
+	};
+
+	const submitGoals = (e) => {
+		e.preventDefault();
+		const goals = parseGoalForm(goalForm);
+		const exceeded = exceedingGoalPeriods(goals, user);
+		if (exceeded.length) {
+			setPendingGoals(goals);
+			setExceededPeriods(exceeded);
+			return;
+		}
+		saveGoals(goals);
 	};
 
 	useEffect(() => {
@@ -303,6 +355,7 @@ export default function BooksPage() {
 							onEdit={openEdit}
 							onInfo={setInfoRow}
 							onDelete={setDeleting}
+							onGoals={openGoals}
 						/>
 					))}
 				</div>
@@ -369,6 +422,76 @@ export default function BooksPage() {
 					Delete <span className="text-fg font-medium">{deleting?.title || 'this book'}</span>? This
 					removes the file and reading progress. This cannot be undone.
 				</p>
+			</Modal>
+
+			<Modal
+				open={Boolean(goalsBook) && !pendingGoals}
+				onClose={closeGoalsModal}
+				title={`Goals · ${goalsBook?.title || 'Book'}`}
+				footer={
+					<>
+						<Button variant="secondary" onClick={closeGoalsModal} disabled={updateGoals.isPending}>
+							Cancel
+						</Button>
+						<Button type="submit" form="book-goals-form" loading={updateGoals.isPending}>
+							Save goals
+						</Button>
+					</>
+				}
+			>
+				<form id="book-goals-form" onSubmit={submitGoals} className="space-y-4">
+					<p className="text-muted text-sm">
+						Set optional minute targets for this book. These are independent of your user-wide goals
+						in Settings.
+					</p>
+					<ReadingGoalsFields
+						idPrefix="book-goal"
+						form={goalForm}
+						onChange={(field, value) => setGoalForm((current) => ({ ...current, [field]: value }))}
+					/>
+				</form>
+			</Modal>
+
+			<Modal
+				open={Boolean(pendingGoals)}
+				onClose={() => {
+					if (updateGoals.isPending) return;
+					setPendingGoals(null);
+					setExceededPeriods([]);
+				}}
+				title="Goals exceed user-wide targets"
+				size="sm"
+				footer={
+					<>
+						<Button
+							variant="secondary"
+							onClick={() => {
+								setPendingGoals(null);
+								setExceededPeriods([]);
+							}}
+							disabled={updateGoals.isPending}
+						>
+							Cancel
+						</Button>
+						<Button
+							loading={updateGoals.isPending}
+							onClick={() => pendingGoals && saveGoals(pendingGoals)}
+						>
+							Save anyway
+						</Button>
+					</>
+				}
+			>
+				<p className="text-muted text-sm">
+					Some book goals are higher than your matching user-wide goals:
+				</p>
+				<ul className="text-fg mt-3 list-disc space-y-1 pl-5 text-sm">
+					{exceededPeriods.map((item) => (
+						<li key={item.key}>
+							{item.label}: {item.book} min (user-wide {item.user} min)
+						</li>
+					))}
+				</ul>
 			</Modal>
 
 			<Modal

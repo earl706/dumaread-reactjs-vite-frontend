@@ -1,14 +1,16 @@
-import { useState } from 'react';
-import { useMutation } from '@tanstack/react-query';
-import { LogOut, Search, Settings as SettingsIcon, Shield } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { LogOut, Search, Settings as SettingsIcon, Shield, Target } from 'lucide-react';
 
 import { patch } from '../lib/api';
 import { isMobileApp } from '../lib/desktop';
+import { emptyGoalForm, goalFormFromRecord, parseGoalForm } from '../lib/readingGoals';
 import { toast } from '../stores/toastStore';
 import { useAuthStore } from '../stores/authStore';
 import { useThemeStore } from '../stores/themeStore';
 import { useUIStore } from '../stores/uiStore';
 import { MfaDisableSection, MfaSetupModal } from '../components/auth/MfaModals';
+import { ReadingGoalsFields } from '../components/books/ReadingGoalsFields';
 import { PageHeader } from '../components/layout/PageHeader';
 import { Avatar, Button, Card, CardBody, CardHeader, Input } from '../components/ui';
 
@@ -19,8 +21,14 @@ export default function SettingsPage() {
 	const { theme, setTheme } = useThemeStore();
 	const openPalette = useUIStore((s) => s.openPalette);
 	const mobile = isMobileApp();
+	const queryClient = useQueryClient();
 	const [mfaSetupOpen, setMfaSetupOpen] = useState(false);
 	const [newEmail, setNewEmail] = useState('');
+	const [goalForm, setGoalForm] = useState(emptyGoalForm);
+
+	useEffect(() => {
+		if (user) setGoalForm(goalFormFromRecord(user));
+	}, [user]);
 
 	const saveName = useMutation({
 		mutationFn: (body) => patch('/auth/me/', body),
@@ -29,6 +37,16 @@ export default function SettingsPage() {
 			toast.success('Profile updated.');
 		},
 		onError: () => toast.error('Could not update profile.')
+	});
+
+	const saveGoals = useMutation({
+		mutationFn: (body) => patch('/auth/me/', body),
+		onSuccess: (data) => {
+			updateUser(data);
+			queryClient.invalidateQueries({ queryKey: ['books', 'stats'] });
+			toast.success('Reading goals saved.');
+		},
+		onError: () => toast.error('Could not save reading goals.')
 	});
 
 	const changeEmail = useMutation({
@@ -137,6 +155,35 @@ export default function SettingsPage() {
 								<Shield size={16} /> Enable MFA
 							</Button>
 						)}
+					</CardBody>
+				</Card>
+
+				<Card>
+					<CardHeader
+						title="Reading goals"
+						subtitle="User-wide daily, weekly, and monthly minute targets"
+						action={<Target size={18} className="text-muted" aria-hidden />}
+					/>
+					<CardBody className="space-y-4">
+						<form
+							id="user-goals-form"
+							className="space-y-4"
+							onSubmit={(e) => {
+								e.preventDefault();
+								saveGoals.mutate(parseGoalForm(goalForm));
+							}}
+						>
+							<ReadingGoalsFields
+								idPrefix="user-goal"
+								form={goalForm}
+								onChange={(field, value) =>
+									setGoalForm((current) => ({ ...current, [field]: value }))
+								}
+							/>
+							<Button type="submit" loading={saveGoals.isPending} className="w-full">
+								Save reading goals
+							</Button>
+						</form>
 					</CardBody>
 				</Card>
 			</div>

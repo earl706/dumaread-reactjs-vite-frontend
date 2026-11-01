@@ -1,6 +1,6 @@
 import { BookOpen } from 'lucide-react';
 
-import { ProgressBar, Skeleton } from '../ui';
+import { GoalProgressRings, ProgressBar, Skeleton } from '../ui';
 import { useCoverSrc } from './BookCard';
 
 export function RecentBookShortcut({ book, onOpen }) {
@@ -25,6 +25,9 @@ export function RecentBookShortcut({ book, onOpen }) {
 						<BookOpen size={20} strokeWidth={1.5} />
 					</div>
 				)}
+				<div className="pointer-events-none absolute top-1 right-1 z-10 rounded-full bg-black/45 p-0.5 backdrop-blur-sm">
+					<GoalProgressRings progress={book.goal_progress} size={32} stroke={2.5} gap={2} />
+				</div>
 			</div>
 			<p className="text-fg mt-1 line-clamp-3 shrink-0 text-sm leading-snug font-medium break-words group-hover:underline">
 				{title}

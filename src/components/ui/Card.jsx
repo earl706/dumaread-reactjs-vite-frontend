@@ -110,6 +110,7 @@ export function CoverCard({
 	select,
 	actions,
 	primaryAction,
+	coverBadge,
 	footer,
 	footerClassName,
 	children,
@@ -185,15 +186,27 @@ export function CoverCard({
 					</label>
 				) : null}
 
+				{coverBadge ? (
+					<div className="absolute top-2 right-2 z-20" onClick={stop} onKeyDown={stop}>
+						{coverBadge}
+					</div>
+				) : null}
+
 				{showMeta ? (
 					<div
 						className={cn(
 							'absolute top-2 z-10 min-w-0 text-white',
-							select ? 'right-2 left-11' : 'inset-x-2'
+							select && coverBadge
+								? 'right-12 left-11'
+								: select
+									? 'right-2 left-11'
+									: coverBadge
+										? 'right-12 left-2'
+										: 'inset-x-2'
 						)}
 					>
 						{title ? (
-							<h3 className="line-clamp-3 text-sm font-semibold leading-snug break-words drop-shadow-sm">
+							<h3 className="line-clamp-3 text-sm leading-snug font-semibold break-words drop-shadow-sm">
 								{title}
 							</h3>
 						) : null}
