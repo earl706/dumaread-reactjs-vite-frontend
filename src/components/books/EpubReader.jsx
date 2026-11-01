@@ -31,7 +31,7 @@ img, svg, figure {
 }
 figure {
   max-height: 100%;
-  overflow: auto;
+  overflow: hidden;
   background: transparent !important;
 }
 caption,
@@ -201,11 +201,10 @@ function applyRenditionTheme(rendition) {
 		},
 		figure: {
 			'max-height': '100%',
-			overflow: 'auto'
+			overflow: 'hidden'
 		},
 		table: {
 			'max-width': '100%',
-			'overflow-x': 'auto',
 			display: 'block'
 		}
 	});

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft, ChevronLeft, ChevronRight } from 'lucide-react';
 import { getDocument, GlobalWorkerOptions } from 'pdfjs-dist';
 import pdfWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
@@ -170,8 +170,15 @@ function TextSpread({ pages, leftPage, rightPage, twoPage }) {
 
 export default function ReaderPage() {
 	const { id } = useParams();
+	const navigate = useNavigate();
 	const twoPage = useTwoPage();
 	const { data: book, isLoading, isError } = booksApi.useDetail(id);
+
+	useEffect(() => {
+		const root = document.documentElement;
+		root.classList.add('reader-lock');
+		return () => root.classList.remove('reader-lock');
+	}, []);
 	const [page, setPage] = useState(null);
 	const [fileBytes, setFileBytes] = useState(null);
 	const [text, setText] = useState('');
@@ -329,6 +336,11 @@ export default function ReaderPage() {
 
 	useEffect(() => {
 		const onKey = (e) => {
+			if (e.key === 'Escape') {
+				e.preventDefault();
+				navigate('/library');
+				return;
+			}
 			if (e.key === 'ArrowRight' || e.key === 'PageDown' || e.key === ' ') {
 				if (
 					e.key === ' ' &&
@@ -345,18 +357,18 @@ export default function ReaderPage() {
 		};
 		window.addEventListener('keydown', onKey);
 		return () => window.removeEventListener('keydown', onKey);
-	}, [canNext, canPrev, goNext, goPrev]);
+	}, [canNext, canPrev, goNext, goPrev, navigate]);
 
 	if (isLoading) {
 		return (
-			<div className="reader-shell flex h-full min-h-screen items-center justify-center">
+			<div className="reader-shell flex items-center justify-center">
 				<LoadingScreen label="Opening book…" />
 			</div>
 		);
 	}
 	if (isError || !book) {
 		return (
-			<div className="reader-shell flex h-full min-h-screen items-center justify-center p-8">
+			<div className="reader-shell flex items-center justify-center p-8">
 				<EmptyState
 					title="Book not found"
 					description="This book is missing or you do not have access."
@@ -378,13 +390,15 @@ export default function ReaderPage() {
 	const footerSplit = twoPage && rightPage && !isEpub;
 
 	return (
-		<div className="reader-shell relative flex h-full min-h-screen flex-col">
+		<div className="reader-shell relative flex flex-col">
 			<header className="relative shrink-0 px-16 pt-5 pb-2">
 				<Link
 					to="/library"
+					aria-label="Library"
 					className="reader-nav absolute top-5 left-5 inline-flex items-center gap-1 text-xs"
 				>
-					<ArrowLeft size={14} /> Library
+					<ArrowLeft size={14} />
+					<span className="hidden sm:inline">Library</span>
 				</Link>
 				<p className="font-reader truncate text-center text-[12px] tracking-wide text-[#9a9a9a]">
 					{book.title}
@@ -397,7 +411,7 @@ export default function ReaderPage() {
 				</p>
 			</header>
 
-			<div className="relative flex min-h-0 flex-1 flex-col">
+			<div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
 				<button
 					type="button"
 					className="reader-nav absolute inset-y-0 left-0 z-10 flex w-14 items-center justify-center"
@@ -408,7 +422,7 @@ export default function ReaderPage() {
 					<ChevronLeft size={28} strokeWidth={1.5} />
 				</button>
 
-				<div className="mx-auto flex min-h-0 w-full max-w-[1300px] flex-1 flex-col px-10">
+				<div className="mx-auto flex min-h-0 w-full max-w-[1300px] flex-1 flex-col overflow-hidden px-10">
 					<main className="min-h-0 flex-1 overflow-hidden py-3">
 						{loadError ? (
 							<EmptyState title="Could not open this file" description={loadError} />

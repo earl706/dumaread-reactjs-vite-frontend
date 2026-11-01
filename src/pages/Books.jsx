@@ -98,6 +98,7 @@ export default function BooksPage() {
 	const [modalOpen, setModalOpen] = useState(false);
 	const [editing, setEditing] = useState(null);
 	const [infoRow, setInfoRow] = useState(null);
+	const [deleting, setDeleting] = useState(null);
 	const [form, setForm] = useState(EMPTY_FORM);
 	const [preview, setPreview] = useState(EMPTY_PREVIEW);
 
@@ -115,7 +116,10 @@ export default function BooksPage() {
 		}
 	});
 	const removeBook = booksApi.useRemove({
-		onSuccess: () => toast.success('Book deleted.')
+		onSuccess: () => {
+			toast.success('Book deleted.');
+			setDeleting(null);
+		}
 	});
 
 	const openCreate = () => {
@@ -298,7 +302,7 @@ export default function BooksPage() {
 							onRead={openReader}
 							onEdit={openEdit}
 							onInfo={setInfoRow}
-							onDelete={(row) => removeBook.mutate(row.id)}
+							onDelete={setDeleting}
 						/>
 					))}
 				</div>
@@ -336,6 +340,36 @@ export default function BooksPage() {
 						: []
 				}
 			/>
+
+			<Modal
+				open={Boolean(deleting)}
+				onClose={() => !removeBook.isPending && setDeleting(null)}
+				title="Delete book"
+				size="sm"
+				footer={
+					<>
+						<Button
+							variant="secondary"
+							onClick={() => setDeleting(null)}
+							disabled={removeBook.isPending}
+						>
+							Cancel
+						</Button>
+						<Button
+							variant="danger"
+							loading={removeBook.isPending}
+							onClick={() => deleting && removeBook.mutate(deleting.id)}
+						>
+							Delete
+						</Button>
+					</>
+				}
+			>
+				<p className="text-muted text-sm">
+					Delete <span className="text-fg font-medium">{deleting?.title || 'this book'}</span>? This
+					removes the file and reading progress. This cannot be undone.
+				</p>
+			</Modal>
 
 			<Modal
 				open={modalOpen}

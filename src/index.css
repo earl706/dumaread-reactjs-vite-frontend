@@ -129,10 +129,42 @@ html.mobile-app :is(input, textarea, select) {
   outline-offset: 2px;
 }
 
+/* Reader route: lock document scroll; shell fills the visual viewport (dvh). */
+html.reader-lock,
+html.reader-lock body {
+  overflow: hidden;
+  overscroll-behavior: none;
+  touch-action: manipulation;
+}
+
+html.reader-lock #root {
+  overflow: hidden;
+  height: 100%;
+  height: 100dvh;
+  max-height: 100dvh;
+}
+
 /* Immersive two-page reader (serif spread on black, matching print-book chrome). */
 .reader-shell {
   background: #000;
   color: #f3f0e8;
+  box-sizing: border-box;
+  width: 100%;
+  height: 100%;
+  max-height: 100%;
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+
+html.reader-lock .reader-shell {
+  position: fixed;
+  inset: 0;
+  height: 100dvh;
+  max-height: 100dvh;
+  padding-top: env(safe-area-inset-top);
+  padding-right: env(safe-area-inset-right);
+  padding-bottom: env(safe-area-inset-bottom);
+  padding-left: env(safe-area-inset-left);
 }
 
 .reader-spread {
