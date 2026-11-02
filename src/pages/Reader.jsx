@@ -1,6 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, Bookmark, ChevronLeft, ChevronRight, Maximize2, Minimize2 } from 'lucide-react';
+import {
+	ArrowLeft,
+	Bookmark,
+	ChevronLeft,
+	ChevronRight,
+	Maximize2,
+	Minimize2,
+	Scan,
+	ZoomIn
+} from 'lucide-react';
 import { getDocument, GlobalWorkerOptions } from 'pdfjs-dist';
 import pdfWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 
@@ -22,6 +31,9 @@ import { EpubReader } from '../components/books/EpubReader';
 import { Button, EmptyState, LoadingScreen, ProgressRing } from '../components/ui';
 
 GlobalWorkerOptions.workerSrc = pdfWorker;
+
+const PDF_FIT_STORAGE_KEY = 'dumaread.pdfFitMode';
+const CHROME_IDLE_MS = 3000;
 
 function getFullscreenElement() {
 	return document.fullscreenElement || document.webkitFullscreenElement || null;
@@ -45,6 +57,15 @@ async function exitFullscreen() {
 	}
 	if (document.webkitExitFullscreen) {
 		await document.webkitExitFullscreen();
+	}
+}
+
+function readPdfFitMode() {
+	try {
+		const stored = localStorage.getItem(PDF_FIT_STORAGE_KEY);
+		return stored === 'stretch' ? 'stretch' : 'fit';
+	} catch {
+		return 'fit';
 	}
 }
 
@@ -83,10 +104,11 @@ function PageProse({ blocks }) {
 	);
 }
 
-function PdfCanvas({ pdf, pageNumber }) {
+function PdfCanvas({ pdf, pageNumber, fitMode }) {
 	const canvasRef = useRef(null);
 	const [error, setError] = useState('');
 	const [frame, setFrame] = useState(0);
+	const stretch = fitMode === 'stretch';
 
 	useEffect(() => {
 		const parent = canvasRef.current?.parentElement;
@@ -109,7 +131,9 @@ function PdfCanvas({ pdf, pageNumber }) {
 				const parent = canvas.parentElement;
 				const maxWidth = Math.max(120, parent?.clientWidth || 480);
 				const maxHeight = Math.max(160, parent?.clientHeight || 640);
-				const scale = Math.min(maxWidth / base.width, maxHeight / base.height);
+				const scale = stretch
+					? Math.max(maxWidth / base.width, maxHeight / base.height)
+					: Math.min(maxWidth / base.width, maxHeight / base.height);
 				const viewport = page.getViewport({ scale });
 				const context = canvas.getContext('2d');
 				canvas.width = viewport.width;
@@ -124,15 +148,22 @@ function PdfCanvas({ pdf, pageNumber }) {
 			cancelled = true;
 			renderTask?.cancel();
 		};
-	}, [pdf, pageNumber, frame]);
+	}, [pdf, pageNumber, frame, stretch]);
 
 	if (error) {
 		return <p className="p-8 text-center text-sm text-red-400">{error}</p>;
 	}
-	return <canvas ref={canvasRef} className="mx-auto max-h-full max-w-full bg-white shadow-sm" />;
+	return (
+		<canvas
+			ref={canvasRef}
+			className={
+				stretch ? 'reader-pdf-cover bg-white' : 'mx-auto max-h-full max-w-full bg-white shadow-sm'
+			}
+		/>
+	);
 }
 
-function PdfSpread({ data, leftPage, rightPage, twoPage }) {
+function PdfSpread({ data, leftPage, rightPage, twoPage, fitMode }) {
 	const [pdf, setPdf] = useState(null);
 	const [error, setError] = useState('');
 
@@ -168,14 +199,16 @@ function PdfSpread({ data, leftPage, rightPage, twoPage }) {
 		<>
 			<div className="reader-page flex items-center justify-center">
 				{pdf ? (
-					<PdfCanvas pdf={pdf} pageNumber={leftPage} />
+					<PdfCanvas pdf={pdf} pageNumber={leftPage} fitMode={fitMode} />
 				) : (
 					<LoadingScreen label="Rendering PDF…" />
 				)}
 			</div>
 			{twoPage ? (
 				<div className="reader-page flex items-center justify-center">
-					{pdf && rightPage ? <PdfCanvas pdf={pdf} pageNumber={rightPage} /> : null}
+					{pdf && rightPage ? (
+						<PdfCanvas pdf={pdf} pageNumber={rightPage} fitMode={fitMode} />
+					) : null}
 				</div>
 			) : null}
 		</>
@@ -237,8 +270,11 @@ export default function ReaderPage() {
 	const epubRef = useRef(null);
 	const wordOffsetRef = useRef(0);
 	const sessionStartedAt = useRef(Date.now());
+	const chromeIdleTimerRef = useRef(null);
 	const [elapsed, setElapsed] = useState(0);
 	const [isFullscreen, setIsFullscreen] = useState(false);
+	const [chromeVisible, setChromeVisible] = useState(false);
+	const [pdfFitMode, setPdfFitMode] = useState(readPdfFitMode);
 
 	useEffect(() => {
 		const sync = () => {
@@ -268,6 +304,55 @@ export default function ReaderPage() {
 	const isPdf = book?.format === 'pdf';
 	const isEpub = book?.format === 'epub';
 	const isTxt = book?.format === 'txt';
+	const immersiveChrome = isPdf || isEpub;
+
+	const showChromeFromCursor = useCallback(() => {
+		if (!immersiveChrome) return;
+		setChromeVisible(true);
+		if (chromeIdleTimerRef.current) window.clearTimeout(chromeIdleTimerRef.current);
+		chromeIdleTimerRef.current = window.setTimeout(() => {
+			setChromeVisible(false);
+		}, CHROME_IDLE_MS);
+	}, [immersiveChrome]);
+
+	useEffect(() => {
+		if (!immersiveChrome) {
+			setChromeVisible(true);
+			if (chromeIdleTimerRef.current) {
+				window.clearTimeout(chromeIdleTimerRef.current);
+				chromeIdleTimerRef.current = null;
+			}
+			return undefined;
+		}
+		setChromeVisible(false);
+		return () => {
+			if (chromeIdleTimerRef.current) {
+				window.clearTimeout(chromeIdleTimerRef.current);
+				chromeIdleTimerRef.current = null;
+			}
+		};
+	}, [immersiveChrome, book?.id]);
+
+	useEffect(() => {
+		if (!immersiveChrome) return undefined;
+		const shell = shellRef.current;
+		if (!shell) return undefined;
+		const onMove = () => showChromeFromCursor();
+		shell.addEventListener('pointermove', onMove);
+		return () => shell.removeEventListener('pointermove', onMove);
+	}, [immersiveChrome, showChromeFromCursor, book?.id]);
+
+	const togglePdfFitMode = useCallback(() => {
+		setPdfFitMode((prev) => {
+			const next = prev === 'stretch' ? 'fit' : 'stretch';
+			try {
+				localStorage.setItem(PDF_FIT_STORAGE_KEY, next);
+			} catch {
+				/* ignore */
+			}
+			return next;
+		});
+	}, []);
 
 	useEffect(() => {
 		if (!book) return;
@@ -470,11 +555,15 @@ export default function ReaderPage() {
 		);
 	}
 
-	const spreadClass = isEpub
-		? 'reader-spread reader-spread-epub'
-		: twoPage
-			? 'reader-spread'
-			: 'reader-spread reader-spread-single';
+	const spreadClass = isPdf
+		? `reader-spread reader-spread-pdf${twoPage ? '' : ' reader-spread-single'}${
+				pdfFitMode === 'stretch' ? ' reader-spread-pdf-stretch' : ''
+			}`
+		: isEpub
+			? 'reader-spread reader-spread-epub'
+			: twoPage
+				? 'reader-spread'
+				: 'reader-spread reader-spread-single';
 	const footerSplit = twoPage && rightPage && !isEpub;
 	const bookmarkPage = book.bookmark_page > 0 ? book.bookmark_page : null;
 	const hasBookmark = bookmarkPage != null;
@@ -491,6 +580,236 @@ export default function ReaderPage() {
 		bookmarkBook.mutate({ id: book.id, page: trackedPage });
 	};
 
+	const elapsedLabel = (
+		<p className="hidden text-[11px] text-[#6e6e6e] sm:block">
+			{formatDurationSeconds(elapsed)}
+			{book.total_reading_seconds
+				? ` · ${formatDurationSeconds(book.total_reading_seconds)} total`
+				: ''}
+		</p>
+	);
+
+	const timerRing = timerSessionActive ? (
+		<div
+			className="inline-flex items-center justify-center"
+			role="img"
+			aria-label={`Reading timer ${timerDisplay} remaining`}
+			title={`Reading timer ${timerDisplay} remaining`}
+		>
+			<ProgressRing value={timerRemainingPct} size={28} stroke={3} tone="primary" label="" />
+		</div>
+	) : null;
+
+	const bookmarkButton = (
+		<button
+			type="button"
+			className={`inline-flex items-center justify-center disabled:opacity-50 ${
+				onBookmarkedPage ? 'text-primary' : 'reader-nav'
+			}`}
+			style={onBookmarkedPage ? { color: 'var(--primary)' } : undefined}
+			onClick={toggleBookmark}
+			disabled={bookmarkBook.isPending || page == null}
+			aria-label={
+				hasBookmark
+					? onBookmarkedPage
+						? 'Remove bookmark from this page'
+						: `Bookmark on page ${bookmarkPage}; click to remove`
+					: 'Bookmark this page'
+			}
+			aria-pressed={onBookmarkedPage}
+			title={
+				hasBookmark
+					? onBookmarkedPage
+						? `Bookmarked (page ${bookmarkPage})`
+						: `Bookmark on page ${bookmarkPage}`
+					: 'Bookmark this page'
+			}
+		>
+			<Bookmark
+				size={18}
+				strokeWidth={onBookmarkedPage ? 2 : 1.5}
+				absoluteStrokeWidth
+				fill={onBookmarkedPage ? 'var(--primary)' : 'none'}
+				color={onBookmarkedPage ? 'var(--primary)' : 'currentColor'}
+			/>
+		</button>
+	);
+
+	const fullscreenButton = (
+		<button
+			type="button"
+			className="reader-nav inline-flex h-9 w-9 items-center justify-center rounded-md"
+			onClick={toggleFullscreen}
+			aria-label={isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}
+			aria-pressed={isFullscreen}
+			title={isFullscreen ? 'Exit fullscreen (F)' : 'Fullscreen (F)'}
+		>
+			{isFullscreen ? (
+				<Minimize2 size={16} strokeWidth={1.5} />
+			) : (
+				<Maximize2 size={16} strokeWidth={1.5} />
+			)}
+		</button>
+	);
+
+	const fitToggleButton = (
+		<button
+			type="button"
+			className="reader-nav inline-flex h-9 w-9 items-center justify-center rounded-md"
+			onClick={togglePdfFitMode}
+			aria-label={
+				pdfFitMode === 'stretch'
+					? 'Fit pages (show entire page)'
+					: 'Fill screen (zoom, keep proportions)'
+			}
+			aria-pressed={pdfFitMode === 'stretch'}
+			title={pdfFitMode === 'stretch' ? 'Fit (entire page)' : 'Fill (zoom to cover)'}
+		>
+			{pdfFitMode === 'stretch' ? (
+				<Scan size={16} strokeWidth={1.5} />
+			) : (
+				<ZoomIn size={16} strokeWidth={1.5} />
+			)}
+		</button>
+	);
+
+	const contentBody = loadError ? (
+		<EmptyState title="Could not open this file" description={loadError} />
+	) : !contentReady ? (
+		<LoadingScreen label="Loading pages…" />
+	) : (
+		<div ref={spreadRef} className={spreadClass}>
+			{isPdf ? (
+				<PdfSpread
+					data={fileBytes}
+					leftPage={leftPage}
+					rightPage={rightPage}
+					twoPage={twoPage}
+					fitMode={pdfFitMode}
+				/>
+			) : isEpub ? (
+				<EpubReader
+					ref={epubRef}
+					data={fileBytes}
+					twoPage={twoPage}
+					pageCount={book.page_count || 1}
+					initialPage={
+						book.bookmark_page > 0
+							? book.bookmark_page
+							: book.current_page > 0
+								? book.current_page
+								: 1
+					}
+					onPageChange={setPage}
+					onBoundsChange={({ atStart, atEnd }) => {
+						setEpubAtStart(atStart);
+						setEpubAtEnd(atEnd);
+					}}
+					onReady={() => setPagesReady(true)}
+					onPointerActivity={showChromeFromCursor}
+				/>
+			) : (
+				<TextSpread pages={textPages} leftPage={leftPage} rightPage={rightPage} twoPage={twoPage} />
+			)}
+		</div>
+	);
+
+	if (immersiveChrome) {
+		const chromeHidden = !chromeVisible;
+		return (
+			<div ref={shellRef} className={`reader-shell relative ${chromeHidden ? 'reader-idle' : ''}`}>
+				<div className={`absolute inset-0 overflow-hidden ${isEpub ? 'reader-epub-inset' : ''}`}>
+					{contentBody}
+				</div>
+
+				<button
+					type="button"
+					className="reader-edge-hit reader-edge-hit-left"
+					onClick={goPrev}
+					disabled={!canPrev}
+					aria-label="Previous pages"
+				/>
+				<button
+					type="button"
+					className="reader-edge-hit reader-edge-hit-right"
+					onClick={goNext}
+					disabled={!canNext}
+					aria-label="Next pages"
+				/>
+
+				<div
+					className={`reader-chrome pointer-events-none absolute inset-0 z-20 ${
+						chromeHidden ? 'reader-chrome-hidden' : ''
+					}`}
+					aria-hidden={chromeHidden}
+				>
+					<div className="pointer-events-none absolute inset-x-0 top-0 h-36 bg-linear-to-b from-black/85 via-black/50 to-transparent" />
+					<div className="pointer-events-none absolute inset-x-0 bottom-0 h-36 bg-linear-to-t from-black/85 via-black/50 to-transparent" />
+
+					<div className="pointer-events-auto absolute inset-x-0 top-0 z-30 flex items-start justify-between gap-4 px-5 pt-5 pb-3">
+						<Link
+							to="/library"
+							aria-label="Library"
+							className="reader-nav relative z-30 inline-flex shrink-0 items-center gap-1 text-xs"
+						>
+							<ArrowLeft size={14} />
+							<span className="hidden sm:inline">Library</span>
+						</Link>
+						<p className="font-reader min-w-0 flex-1 truncate text-center text-[12px] tracking-wide text-[#9a9a9a]">
+							{book.title}
+						</p>
+						<div className="relative z-30 flex shrink-0 items-center gap-3">
+							{elapsedLabel}
+							{timerRing}
+							{bookmarkButton}
+						</div>
+					</div>
+
+					<button
+						type="button"
+						className="reader-nav pointer-events-auto absolute top-16 bottom-16 left-0 z-10 flex w-14 items-center justify-center"
+						onClick={goPrev}
+						disabled={!canPrev}
+						tabIndex={chromeHidden ? -1 : 0}
+						aria-label="Previous pages"
+					>
+						<ChevronLeft size={28} strokeWidth={1.5} />
+					</button>
+					<button
+						type="button"
+						className="reader-nav pointer-events-auto absolute top-16 right-0 bottom-16 z-10 flex w-14 items-center justify-center"
+						onClick={goNext}
+						disabled={!canNext}
+						tabIndex={chromeHidden ? -1 : 0}
+						aria-label="Next pages"
+					>
+						<ChevronRight size={28} strokeWidth={1.5} />
+					</button>
+
+					<div className="pointer-events-auto absolute inset-x-0 bottom-0 z-30 flex items-end justify-between gap-4 px-5 pt-3 pb-5">
+						<div
+							className={`min-w-0 flex-1 text-[12px] text-[#8a8a8a] ${
+								footerSplit ? 'grid grid-cols-2' : 'flex justify-between'
+							}`}
+						>
+							<p className={footerSplit ? 'text-center' : ''}>
+								{libraryPage} of {libraryTotal}
+								<span className="text-[#6e6e6e]"> · {progressPercent}%</span>
+							</p>
+							<p className="text-right">
+								{pagesLeft} page{pagesLeft === 1 ? '' : 's'} left
+							</p>
+						</div>
+						<div className="relative z-30 flex shrink-0 items-center gap-1">
+							{isPdf ? fitToggleButton : null}
+							{fullscreenButton}
+						</div>
+					</div>
+				</div>
+			</div>
+		);
+	}
+
 	return (
 		<div ref={shellRef} className="reader-shell relative flex flex-col">
 			<header className="relative shrink-0 px-16 pt-5 pb-2">
@@ -506,60 +825,9 @@ export default function ReaderPage() {
 					{book.title}
 				</p>
 				<div className="absolute top-5 right-5 flex items-center gap-3">
-					<p className="hidden text-[11px] text-[#6e6e6e] sm:block">
-						{formatDurationSeconds(elapsed)}
-						{book.total_reading_seconds
-							? ` · ${formatDurationSeconds(book.total_reading_seconds)} total`
-							: ''}
-					</p>
-					{timerSessionActive ? (
-						<div
-							className="inline-flex items-center justify-center"
-							role="img"
-							aria-label={`Reading timer ${timerDisplay} remaining`}
-							title={`Reading timer ${timerDisplay} remaining`}
-						>
-							<ProgressRing
-								value={timerRemainingPct}
-								size={28}
-								stroke={3}
-								tone="primary"
-								label=""
-							/>
-						</div>
-					) : null}
-					<button
-						type="button"
-						className={`inline-flex items-center justify-center disabled:opacity-50 ${
-							onBookmarkedPage ? 'text-primary' : 'reader-nav'
-						}`}
-						style={onBookmarkedPage ? { color: 'var(--primary)' } : undefined}
-						onClick={toggleBookmark}
-						disabled={bookmarkBook.isPending || page == null}
-						aria-label={
-							hasBookmark
-								? onBookmarkedPage
-									? 'Remove bookmark from this page'
-									: `Bookmark on page ${bookmarkPage}; click to remove`
-								: 'Bookmark this page'
-						}
-						aria-pressed={onBookmarkedPage}
-						title={
-							hasBookmark
-								? onBookmarkedPage
-									? `Bookmarked (page ${bookmarkPage})`
-									: `Bookmark on page ${bookmarkPage}`
-								: 'Bookmark this page'
-						}
-					>
-						<Bookmark
-							size={18}
-							strokeWidth={onBookmarkedPage ? 2 : 1.5}
-							absoluteStrokeWidth
-							fill={onBookmarkedPage ? 'var(--primary)' : 'none'}
-							color={onBookmarkedPage ? 'var(--primary)' : 'currentColor'}
-						/>
-					</button>
+					{elapsedLabel}
+					{timerRing}
+					{bookmarkButton}
 				</div>
 			</header>
 
@@ -575,51 +843,7 @@ export default function ReaderPage() {
 				</button>
 
 				<div className="mx-auto flex min-h-0 w-full max-w-[1300px] flex-1 flex-col overflow-hidden px-10">
-					<main className="min-h-0 flex-1 overflow-hidden py-3">
-						{loadError ? (
-							<EmptyState title="Could not open this file" description={loadError} />
-						) : !contentReady ? (
-							<LoadingScreen label="Loading pages…" />
-						) : (
-							<div ref={spreadRef} className={spreadClass}>
-								{isPdf ? (
-									<PdfSpread
-										data={fileBytes}
-										leftPage={leftPage}
-										rightPage={rightPage}
-										twoPage={twoPage}
-									/>
-								) : isEpub ? (
-									<EpubReader
-										ref={epubRef}
-										data={fileBytes}
-										twoPage={twoPage}
-										pageCount={book.page_count || 1}
-										initialPage={
-											book.bookmark_page > 0
-												? book.bookmark_page
-												: book.current_page > 0
-													? book.current_page
-													: 1
-										}
-										onPageChange={setPage}
-										onBoundsChange={({ atStart, atEnd }) => {
-											setEpubAtStart(atStart);
-											setEpubAtEnd(atEnd);
-										}}
-										onReady={() => setPagesReady(true)}
-									/>
-								) : (
-									<TextSpread
-										pages={textPages}
-										leftPage={leftPage}
-										rightPage={rightPage}
-										twoPage={twoPage}
-									/>
-								)}
-							</div>
-						)}
-					</main>
+					<main className="min-h-0 flex-1 overflow-hidden py-3">{contentBody}</main>
 					<footer
 						className={`shrink-0 pt-2 pb-5 text-[12px] text-[#8a8a8a] ${
 							footerSplit ? 'grid grid-cols-2' : 'flex justify-between'
@@ -646,20 +870,7 @@ export default function ReaderPage() {
 				</button>
 			</div>
 
-			<button
-				type="button"
-				className="reader-nav absolute right-4 bottom-4 z-20 inline-flex h-9 w-9 items-center justify-center rounded-md"
-				onClick={toggleFullscreen}
-				aria-label={isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}
-				aria-pressed={isFullscreen}
-				title={isFullscreen ? 'Exit fullscreen (F)' : 'Fullscreen (F)'}
-			>
-				{isFullscreen ? (
-					<Minimize2 size={16} strokeWidth={1.5} />
-				) : (
-					<Maximize2 size={16} strokeWidth={1.5} />
-				)}
-			</button>
+			<div className="absolute right-4 bottom-4 z-20">{fullscreenButton}</div>
 		</div>
 	);
 }

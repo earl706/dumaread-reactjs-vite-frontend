@@ -211,7 +211,16 @@ function applyRenditionTheme(rendition) {
 }
 
 export const EpubReader = forwardRef(function EpubReader(
-	{ data, twoPage, pageCount, initialPage, onPageChange, onBoundsChange, onReady },
+	{
+		data,
+		twoPage,
+		pageCount,
+		initialPage,
+		onPageChange,
+		onBoundsChange,
+		onReady,
+		onPointerActivity
+	},
 	ref
 ) {
 	const renditionRef = useRef(null);
@@ -219,6 +228,7 @@ export const EpubReader = forwardRef(function EpubReader(
 	const locationsReadyRef = useRef(false);
 	const resumeAppliedRef = useRef(false);
 	const resumePendingRef = useRef(false);
+	const resumeCorrectiveRef = useRef(0);
 	const pendingNavRef = useRef(null);
 	const lastCfiRef = useRef('');
 	const pageCountRef = useRef(pageCount);
@@ -226,6 +236,7 @@ export const EpubReader = forwardRef(function EpubReader(
 	const onPageChangeRef = useRef(onPageChange);
 	const onBoundsChangeRef = useRef(onBoundsChange);
 	const onReadyRef = useRef(onReady);
+	const onPointerActivityRef = useRef(onPointerActivity);
 	const [location, setLocation] = useState(null);
 
 	pageCountRef.current = pageCount;
@@ -233,6 +244,7 @@ export const EpubReader = forwardRef(function EpubReader(
 	onPageChangeRef.current = onPageChange;
 	onBoundsChangeRef.current = onBoundsChange;
 	onReadyRef.current = onReady;
+	onPointerActivityRef.current = onPointerActivity;
 
 	const flushPendingNav = useCallback(() => {
 		const pending = pendingNavRef.current;
@@ -276,16 +288,20 @@ export const EpubReader = forwardRef(function EpubReader(
 		if (resumeAppliedRef.current || resumePendingRef.current || !locationsReadyRef.current) return;
 		const count = Math.max(1, pageCountRef.current || 1);
 		const start = clampPage(initialPageRef.current || 1, count);
+		// Midpoint of the Math.round band used by pageFromCfi. Two-page display can still
+		// land a spread early; relocated corrects using loc.start before unlocking nav.
+		const pct = Math.min(0.999999, Math.max(0, (start - 0.5) / count));
 		if (start <= 1) {
 			markResumeDone();
 			return;
 		}
-		const cfi = bookRef.current?.locations.cfiFromPercentage((start - 1) / count);
+		const cfi = bookRef.current?.locations.cfiFromPercentage(pct);
 		if (!cfi) {
 			markResumeDone();
 			return;
 		}
 		lastCfiRef.current = '';
+		resumeCorrectiveRef.current = 0;
 		resumePendingRef.current = true;
 		setLocation(cfi);
 	}, [markResumeDone]);
@@ -297,11 +313,19 @@ export const EpubReader = forwardRef(function EpubReader(
 			locationsReadyRef.current = false;
 			resumeAppliedRef.current = false;
 			resumePendingRef.current = false;
+			resumeCorrectiveRef.current = 0;
 			pendingNavRef.current = null;
 			lastCfiRef.current = '';
 			rendition.spread(twoPage ? 'always' : 'none', 0);
 			applyRenditionTheme(rendition);
-			rendition.hooks.content.register(injectContentStyles);
+			rendition.hooks.content.register((contents) => {
+				injectContentStyles(contents);
+				const doc = contents.document;
+				if (!doc) return;
+				const onMove = () => onPointerActivityRef.current?.();
+				doc.addEventListener('pointermove', onMove);
+				doc.addEventListener('mousemove', onMove);
+			});
 			rendition.on('keyup', (event) => {
 				if (event.key === 'ArrowRight' || event.key === 'PageDown') {
 					requestNav('next');
@@ -316,8 +340,37 @@ export const EpubReader = forwardRef(function EpubReader(
 				});
 				const cfi = loc.start?.cfi;
 				if (!cfi) return;
+				const count = pageCountRef.current;
+				const reported = pageFromCfi(bookRef.current, cfi, count);
+				const target = clampPage(initialPageRef.current || 1, count);
 				lastCfiRef.current = cfi;
 				if (resumePendingRef.current) {
+					// Bookmarks are saved from loc.start; end CFI can round high in two-page
+					// mode and look like the spread already covers the target.
+					const tol = twoPage ? 1 : 0;
+					const onTarget = reported != null && reported <= target && reported >= target - tol;
+					if (
+						!onTarget &&
+						reported != null &&
+						reported < target &&
+						!loc.atEnd &&
+						resumeCorrectiveRef.current < 8
+					) {
+						resumeCorrectiveRef.current += 1;
+						rendition.next();
+						return;
+					}
+					if (
+						!onTarget &&
+						reported != null &&
+						reported > target &&
+						!loc.atStart &&
+						resumeCorrectiveRef.current < 8
+					) {
+						resumeCorrectiveRef.current += 1;
+						rendition.prev();
+						return;
+					}
 					markResumeDone();
 					reportPage(cfi);
 					return;

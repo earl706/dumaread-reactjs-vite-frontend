@@ -221,6 +221,89 @@ html.reader-lock .reader-shell {
   width: 100%;
 }
 
+/* Immersive EPUB: keep prior vertical chrome spacing; no horizontal inset. */
+.reader-epub-inset {
+  padding-top: 3.25rem; /* header pt-5 + title + pb-2 + main py-3 */
+  padding-bottom: 3.4rem; /* main py-3 + footer pt-2 + label + pb-5 */
+  padding-left: 0;
+  padding-right: 0;
+}
+
+/* Edge-to-edge PDF contain/stretch spread (chrome overlays the canvas). */
+.reader-spread.reader-spread-pdf {
+  column-gap: 0;
+  width: 100%;
+  max-width: none;
+  height: 100%;
+}
+
+.reader-spread.reader-spread-pdf.reader-spread-single {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+/* Uniform zoom-to-cover: page keeps aspect ratio; overflow clips the zoom. */
+.reader-spread.reader-spread-pdf-stretch .reader-page {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.reader-spread.reader-spread-pdf-stretch .reader-page canvas.reader-pdf-cover {
+  display: block;
+  max-width: none;
+  max-height: none;
+  flex-shrink: 0;
+}
+
+.reader-chrome {
+  transition: opacity 200ms ease;
+}
+
+.reader-chrome-hidden {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.reader-chrome-hidden * {
+  pointer-events: none !important;
+}
+
+.reader-shell.reader-idle {
+  cursor: none;
+}
+
+.reader-edge-hit {
+  position: absolute;
+  top: 4rem;
+  bottom: 4rem;
+  z-index: 15;
+  width: 3.5rem;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
+/* When chrome is hidden, use full-height edge hits for page turns. */
+.reader-shell.reader-idle .reader-edge-hit {
+  top: 0;
+  bottom: 0;
+}
+
+.reader-edge-hit:disabled {
+  cursor: default;
+}
+
+.reader-edge-hit-left {
+  left: 0;
+}
+
+.reader-edge-hit-right {
+  right: 0;
+}
+
 /* Subtle dissolve when navigating (class restarted from Reader.jsx). */
 @keyframes reader-turn-fade {
   from {
@@ -247,6 +330,10 @@ html.reader-lock .reader-shell {
   min-height: 0;
   height: 100%;
   overflow: hidden;
+}
+
+.reader-spread-pdf .reader-page {
+  min-width: 0;
 }
 
 .reader-prose > :last-child {
@@ -313,8 +400,12 @@ html.reader-lock .reader-shell {
 }
 
 @media (max-width: 899px) {
-  .reader-spread {
+  .reader-spread:not(.reader-spread-pdf) {
     grid-template-columns: minmax(0, 52rem);
     justify-content: center;
+  }
+
+  .reader-spread.reader-spread-pdf {
+    grid-template-columns: minmax(0, 1fr);
   }
 }
