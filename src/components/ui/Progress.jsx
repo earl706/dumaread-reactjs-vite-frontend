@@ -1,4 +1,11 @@
-import { cn } from '../../lib/format';
+import { cn, formatDurationSeconds } from '../../lib/format';
+
+function formatGoalSpent(entry) {
+	if (entry?.seconds != null) return formatDurationSeconds(entry.seconds);
+	const mins = Number(entry?.minutes);
+	if (!Number.isFinite(mins) || mins <= 0) return '0s';
+	return formatDurationSeconds(Math.round(mins * 60));
+}
 
 const TONE_COLOR = {
 	primary: 'var(--primary)',
@@ -102,7 +109,8 @@ export function GoalProgressRings({
 		const entry = progress?.[key];
 		if (entry?.goal_minutes == null) return `${label}: no goal`;
 		const pct = entry.percent ?? 0;
-		return `${label}: ${entry.minutes ?? 0}/${entry.goal_minutes} min (${Math.round(pct)}%)`;
+		const spent = formatGoalSpent(entry);
+		return `${label}: ${spent} / ${entry.goal_minutes}m (${Math.round(pct)}%)`;
 	});
 
 	return (

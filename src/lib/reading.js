@@ -2,7 +2,6 @@
 export const WORDS_PER_PAGE = 300;
 export const MAX_BOOK_BYTES = 50 * 1024 * 1024;
 export const HEARTBEAT_MS = 15_000;
-export const IDLE_MS = 60_000;
 export const ACCEPTED_BOOK_TYPES = '.pdf,.epub,.txt';
 
 const BULLET_RE = /^([•●▪‣*–-]|[0-9]+[.)])\s+/;
