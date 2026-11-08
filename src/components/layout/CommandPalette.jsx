@@ -3,7 +3,14 @@ import { useNavigate } from 'react-router-dom';
 import { AnimatePresence, motion } from 'framer-motion';
 import { Search } from 'lucide-react';
 
+import {
+	bookFromSavedMeta,
+	getSavedBookMeta,
+	listSavedBookIds
+} from '../../lib/offline/savedBooks';
 import { booksApi } from '../../lib/resources';
+import { useAuthStore } from '../../stores/authStore';
+import { useOfflineStore } from '../../stores/offlineStore';
 import { useUIStore } from '../../stores/uiStore';
 
 /**
@@ -12,19 +19,58 @@ import { useUIStore } from '../../stores/uiStore';
  */
 function PaletteDialog({ onClose }) {
 	const navigate = useNavigate();
+	const userId = useAuthStore((s) => s.user?.id);
+	const online = useOfflineStore((s) => s.online);
 	const [term, setTerm] = useState('');
 	const [debounced, setDebounced] = useState('');
+	const [offlineResults, setOfflineResults] = useState([]);
+	const [offlineFetching, setOfflineFetching] = useState(false);
 
 	useEffect(() => {
 		const id = setTimeout(() => setDebounced(term.trim()), 220);
 		return () => clearTimeout(id);
 	}, [term]);
 
-	const { data, isFetching } = booksApi.useList(
+	const { data, isFetching: onlineFetching } = booksApi.useList(
 		{ search: debounced, page_size: 8 },
-		{ enabled: debounced.length > 1 }
+		{ enabled: online && debounced.length > 1, retry: 0 }
 	);
-	const results = data?.results || [];
+
+	useEffect(() => {
+		if (online || debounced.length <= 1 || !userId) {
+			setOfflineResults([]);
+			setOfflineFetching(false);
+			return undefined;
+		}
+		let cancelled = false;
+		setOfflineFetching(true);
+		(async () => {
+			try {
+				const ids = await listSavedBookIds(userId);
+				const needle = debounced.toLowerCase();
+				const rows = [];
+				for (const bookId of ids) {
+					const meta = await getSavedBookMeta(userId, bookId);
+					if (!meta) continue;
+					const hay = `${meta.title || ''} ${meta.author || ''}`.toLowerCase();
+					if (!hay.includes(needle)) continue;
+					rows.push(bookFromSavedMeta(meta));
+					if (rows.length >= 8) break;
+				}
+				if (!cancelled) setOfflineResults(rows);
+			} catch {
+				if (!cancelled) setOfflineResults([]);
+			} finally {
+				if (!cancelled) setOfflineFetching(false);
+			}
+		})();
+		return () => {
+			cancelled = true;
+		};
+	}, [online, debounced, userId]);
+
+	const results = online ? data?.results || [] : offlineResults;
+	const isFetching = online ? onlineFetching : offlineFetching;
 
 	const goTo = (book) => {
 		onClose();
@@ -46,7 +92,7 @@ function PaletteDialog({ onClose }) {
 					autoFocus
 					value={term}
 					onChange={(e) => setTerm(e.target.value)}
-					placeholder="Search books…"
+					placeholder={online ? 'Search books…' : 'Search offline books…'}
 					className="text-fg placeholder:text-muted h-14 flex-1 bg-transparent outline-none"
 				/>
 				{isFetching && <span className="text-muted text-xs">…</span>}
@@ -54,7 +100,9 @@ function PaletteDialog({ onClose }) {
 
 			<div className="max-h-80 overflow-y-auto p-2">
 				{debounced.length <= 1 && (
-					<p className="text-muted p-6 text-center text-sm">Type to search your library.</p>
+					<p className="text-muted p-6 text-center text-sm">
+						{online ? 'Type to search your library.' : 'Type to search books saved offline.'}
+					</p>
 				)}
 				{debounced.length > 1 && !isFetching && results.length === 0 && (
 					<p className="text-muted p-6 text-center text-sm">No results for “{debounced}”.</p>

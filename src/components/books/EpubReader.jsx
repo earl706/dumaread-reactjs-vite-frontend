@@ -322,9 +322,13 @@ export const EpubReader = forwardRef(function EpubReader(
 				injectContentStyles(contents);
 				const doc = contents.document;
 				if (!doc) return;
-				const onMove = () => onPointerActivityRef.current?.();
-				doc.addEventListener('pointermove', onMove);
-				doc.addEventListener('mousemove', onMove);
+				// pointermove alone misses taps in iOS standalone / touch WebViews.
+				const reveal = () => onPointerActivityRef.current?.();
+				doc.addEventListener('pointermove', reveal);
+				doc.addEventListener('mousemove', reveal);
+				doc.addEventListener('pointerdown', reveal);
+				doc.addEventListener('touchstart', reveal, { passive: true });
+				doc.addEventListener('click', reveal);
 			});
 			rendition.on('keyup', (event) => {
 				if (event.key === 'ArrowRight' || event.key === 'PageDown') {

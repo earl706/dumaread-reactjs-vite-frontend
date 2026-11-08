@@ -2,6 +2,7 @@ import { useNavigate } from 'react-router-dom';
 import { BookOpen, Clock, Layers, BookMarked } from 'lucide-react';
 
 import { useAuthStore } from '../stores/authStore';
+import { useOfflineStore } from '../stores/offlineStore';
 import { booksApi } from '../lib/resources';
 import { formatDurationSeconds } from '../lib/format';
 import { PageHeader } from '../components/layout/PageHeader';
@@ -19,16 +20,23 @@ function greeting() {
 export default function DashboardPage() {
 	const navigate = useNavigate();
 	const user = useAuthStore((s) => s.user);
+	const online = useOfflineStore((s) => s.online);
 	const name = user?.full_name?.split(' ')[0] || 'there';
 
-	const { data: stats } = booksApi.useStats();
-	const { data: activity } = booksApi.useActivity({ days: 500 });
-	const { data: recent, isLoading: recentLoading } = booksApi.useList({
-		ordering: '-last_read_at',
-		last_read_at__isnull: false,
-		page_size: 5,
-		page: 1
-	});
+	const { data: stats } = booksApi.useStats({ enabled: online, retry: online ? 1 : 0 });
+	const { data: activity } = booksApi.useActivity(
+		{ days: 500 },
+		{ enabled: online, retry: online ? 1 : 0 }
+	);
+	const { data: recent, isLoading: recentLoading } = booksApi.useList(
+		{
+			ordering: '-last_read_at',
+			last_read_at__isnull: false,
+			page_size: 5,
+			page: 1
+		},
+		{ enabled: online, retry: online ? 1 : 0 }
+	);
 
 	const timeline = activity?.timeline || [];
 	const recentBooks = recent?.results || [];

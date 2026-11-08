@@ -13,8 +13,12 @@ import {
 } from '../lib/readingGoals';
 import { STATUS_LABELS } from '../lib/status';
 import { formatDate, formatDurationSeconds } from '../lib/format';
+import { removeBookForOffline, saveBookForOffline } from '../lib/offline/actions';
+import { getMergedBookProgress } from '../lib/offline/localProgress';
+import { bookFromSavedMeta, getSavedBookMeta, listSavedBookIds } from '../lib/offline/savedBooks';
 import { toast } from '../stores/toastStore';
 import { useAuthStore } from '../stores/authStore';
+import { useOfflineStore } from '../stores/offlineStore';
 import { useListControls } from '../hooks/useListControls';
 import { PageHeader } from '../components/layout/PageHeader';
 import { BookCard } from '../components/books/BookCard';
@@ -89,6 +93,8 @@ function errorMessage(err, fallback) {
 export default function BooksPage() {
 	const navigate = useNavigate();
 	const user = useAuthStore((s) => s.user);
+	const online = useOfflineStore((s) => s.online);
+	const savedIds = useOfflineStore((s) => s.savedIds);
 	const {
 		search,
 		setSearch,
@@ -101,8 +107,39 @@ export default function BooksPage() {
 		page
 	} = useListControls({ defaultOrdering: DEFAULT_ORDERING, pageSize: GRID_PAGE_SIZE });
 
-	const { data, isLoading, isError } = booksApi.useList(queryParams);
-	const books = data?.results || [];
+	const { data, isLoading, isError } = booksApi.useList(queryParams, {
+		retry: online ? 1 : 0,
+		enabled: online
+	});
+	const [offlineBooks, setOfflineBooks] = useState([]);
+	const books = (!online || isError ? offlineBooks : data?.results) || [];
+
+	useEffect(() => {
+		if (online && !isError) return undefined;
+		if (!user?.id) {
+			setOfflineBooks([]);
+			return undefined;
+		}
+		let cancelled = false;
+		(async () => {
+			try {
+				const ids = savedIds.length ? savedIds : await listSavedBookIds(user.id);
+				const rows = [];
+				for (const bookId of ids) {
+					const meta = await getSavedBookMeta(user.id, bookId);
+					if (!meta) continue;
+					const progress = await getMergedBookProgress(user.id, bookId);
+					rows.push(bookFromSavedMeta(meta, progress));
+				}
+				if (!cancelled) setOfflineBooks(rows);
+			} catch {
+				if (!cancelled) setOfflineBooks([]);
+			}
+		})();
+		return () => {
+			cancelled = true;
+		};
+	}, [online, isError, user?.id, savedIds]);
 
 	const [modalOpen, setModalOpen] = useState(false);
 	const [editing, setEditing] = useState(null);
@@ -326,23 +363,27 @@ export default function BooksPage() {
 				]}
 			/>
 
-			{isLoading ? (
+			{online && isLoading ? (
 				<LoadingScreen />
-			) : isError ? (
-				<EmptyState
-					icon={BookOpen}
-					title="Could not load your library"
-					description="Something went wrong while fetching your books."
-				/>
 			) : books.length === 0 ? (
 				<EmptyState
 					icon={BookOpen}
-					title="No books yet"
-					description="Upload a PDF, EPUB, or TXT file to start reading."
+					title={
+						!online ? 'No offline books' : isError ? 'Could not load your library' : 'No books yet'
+					}
+					description={
+						!online
+							? 'Save books for offline while online, then reopen them here.'
+							: isError
+								? 'Something went wrong while fetching your books.'
+								: 'Upload a PDF, EPUB, or TXT file to start reading.'
+					}
 					action={
-						<Button onClick={openCreate}>
-							<Plus size={16} /> Upload book
-						</Button>
+						online && !isError ? (
+							<Button onClick={openCreate}>
+								<Plus size={16} /> Upload book
+							</Button>
+						) : null
 					}
 				/>
 			) : (
@@ -352,10 +393,14 @@ export default function BooksPage() {
 							key={book.id}
 							book={book}
 							onRead={openReader}
-							onEdit={openEdit}
-							onInfo={setInfoRow}
-							onDelete={setDeleting}
-							onGoals={openGoals}
+							onEdit={online ? openEdit : undefined}
+							onInfo={online ? setInfoRow : undefined}
+							onDelete={online ? setDeleting : undefined}
+							onGoals={online ? openGoals : undefined}
+							onToggleOffline={async (row, isSaved) => {
+								if (isSaved) await removeBookForOffline(row.id, row.title);
+								else await saveBookForOffline(row);
+							}}
 						/>
 					))}
 				</div>
@@ -440,14 +485,12 @@ export default function BooksPage() {
 				}
 			>
 				<form id="book-goals-form" onSubmit={submitGoals} className="space-y-4">
-					<p className="text-muted text-sm">
-						Set optional minute targets for this book. These are independent of your user-wide goals
-						in Settings.
-					</p>
 					<ReadingGoalsFields
 						idPrefix="book-goal"
 						form={goalForm}
+						progress={goalsBook?.goal_progress}
 						onChange={(field, value) => setGoalForm((current) => ({ ...current, [field]: value }))}
+						onReplace={setGoalForm}
 					/>
 				</form>
 			</Modal>

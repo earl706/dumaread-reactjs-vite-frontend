@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react';
-import { BookOpen, Clock, Info, Pencil, Trash2 } from 'lucide-react';
+import { BookOpen, Clock, Download, Info, Pencil, Trash2, WifiOff } from 'lucide-react';
 
 import { booksApi } from '../../lib/resources';
 import { formatLabel } from '../../lib/reading';
 import { STATUS_LABELS } from '../../lib/status';
 import { formatDurationSeconds } from '../../lib/format';
+import { useOfflineStore } from '../../stores/offlineStore';
 import { CoverCard, GoalProgressRings, ProgressBar, Skeleton } from '../ui';
 
 export function useCoverSrc(book) {
@@ -41,20 +42,38 @@ export function useCoverSrc(book) {
 	return { src, tried };
 }
 
-export function BookCard({ book, onRead, onEdit, onInfo, onDelete, onGoals }) {
+export function BookCard({ book, onRead, onEdit, onInfo, onDelete, onGoals, onToggleOffline }) {
 	const { src, tried } = useCoverSrc(book);
 	const title = book.title || 'Untitled';
 	const loading = book.format !== 'txt' && !tried && !src;
+	const savedOffline = useOfflineStore((s) => s.savedIds.includes(Number(book.id)));
 
 	const actions = [
-		{ icon: Info, label: `Info for ${title}`, onClick: () => onInfo(book) },
-		{ icon: Pencil, label: `Edit ${title}`, onClick: () => onEdit(book) },
-		{
-			icon: Trash2,
-			label: `Delete ${title}`,
-			onClick: () => onDelete(book),
-			tone: 'danger'
-		}
+		...(typeof onInfo === 'function'
+			? [{ icon: Info, label: `Info for ${title}`, onClick: () => onInfo(book) }]
+			: []),
+		...(typeof onEdit === 'function'
+			? [{ icon: Pencil, label: `Edit ${title}`, onClick: () => onEdit(book) }]
+			: []),
+		...(typeof onToggleOffline === 'function'
+			? [
+					{
+						icon: savedOffline ? WifiOff : Download,
+						label: savedOffline ? `Remove ${title} from offline` : `Save ${title} for offline`,
+						onClick: () => onToggleOffline(book, savedOffline)
+					}
+				]
+			: []),
+		...(typeof onDelete === 'function'
+			? [
+					{
+						icon: Trash2,
+						label: `Delete ${title}`,
+						onClick: () => onDelete(book),
+						tone: 'danger'
+					}
+				]
+			: [])
 	];
 
 	const goalsLabel = `Reading goals for ${title}`;

@@ -5,14 +5,26 @@ import {
 	Bookmark,
 	ChevronLeft,
 	ChevronRight,
+	Download,
 	Maximize2,
 	Minimize2,
 	Scan,
+	WifiOff,
 	ZoomIn
 } from 'lucide-react';
 import { getDocument, GlobalWorkerOptions } from 'pdfjs-dist';
 import pdfWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 
+import { removeBookForOffline, saveBookForOffline } from '../lib/offline/actions';
+import { isOnline } from '../lib/offline/connectivity';
+import { getMergedBookProgress } from '../lib/offline/localProgress';
+import {
+	bookFromSavedMeta,
+	getSavedBookContent,
+	getSavedBookMeta,
+	isBookSaved,
+	touchSavedBook
+} from '../lib/offline/savedBooks';
 import { booksApi } from '../lib/resources';
 import {
 	WORDS_PER_PAGE,
@@ -23,6 +35,8 @@ import {
 } from '../lib/reading';
 import { formatDurationSeconds } from '../lib/format';
 import { formatTimerDisplay } from '../lib/timerFormat';
+import { useAuthStore } from '../stores/authStore';
+import { useOfflineStore } from '../stores/offlineStore';
 import { toast } from '../stores/toastStore';
 import { selectIntervalActive } from '../stores/createTimerStore';
 import { readingTimer } from '../stores/readingTimer';
@@ -234,7 +248,19 @@ export default function ReaderPage() {
 	const { id } = useParams();
 	const navigate = useNavigate();
 	const twoPage = useTwoPage();
-	const { data: book, isLoading, isError } = booksApi.useDetail(id);
+	const user = useAuthStore((s) => s.user);
+	const online = useOfflineStore((s) => s.online);
+	const savedIds = useOfflineStore((s) => s.savedIds);
+	const {
+		data: remoteBook,
+		isLoading,
+		isError,
+		isFetching
+	} = booksApi.useDetail(id, {
+		retry: online ? 1 : 0,
+		// Offline cold-open: skip the API so IndexedDB hydrate is not blocked by timeouts.
+		enabled: Boolean(id) && online
+	});
 	const bookmarkBook = booksApi.useBookmark({
 		onSuccess: (data) => {
 			toast.success(
@@ -255,6 +281,8 @@ export default function ReaderPage() {
 		root.classList.add('reader-lock');
 		return () => root.classList.remove('reader-lock');
 	}, []);
+	const [offlineBook, setOfflineBook] = useState(null);
+	const [offlineResolving, setOfflineResolving] = useState(false);
 	const [page, setPage] = useState(null);
 	const [fileBytes, setFileBytes] = useState(null);
 	const [text, setText] = useState('');
@@ -275,6 +303,45 @@ export default function ReaderPage() {
 	const [isFullscreen, setIsFullscreen] = useState(false);
 	const [chromeVisible, setChromeVisible] = useState(false);
 	const [pdfFitMode, setPdfFitMode] = useState(readPdfFitMode);
+
+	const book = remoteBook || offlineBook;
+	const isSavedOffline = savedIds.includes(Number(id));
+	const readingOffline = Boolean(book?._offline) || (!online && Boolean(book));
+
+	useEffect(() => {
+		setOfflineBook(null);
+		setOfflineResolving(false);
+	}, [id]);
+
+	useEffect(() => {
+		if (remoteBook || !user?.id || !id) return undefined;
+		if (isLoading || isFetching) return undefined;
+		if (online && !isError) return undefined;
+
+		let cancelled = false;
+		setOfflineResolving(true);
+		(async () => {
+			try {
+				const meta = await getSavedBookMeta(user.id, id);
+				if (cancelled) return;
+				if (!meta) {
+					setOfflineBook(null);
+					return;
+				}
+				const progress = await getMergedBookProgress(user.id, id);
+				if (cancelled) return;
+				setOfflineBook(bookFromSavedMeta(meta, progress));
+				await touchSavedBook(user.id, id);
+			} catch {
+				if (!cancelled) setOfflineBook(null);
+			} finally {
+				if (!cancelled) setOfflineResolving(false);
+			}
+		})();
+		return () => {
+			cancelled = true;
+		};
+	}, [remoteBook, user?.id, id, isLoading, isFetching, online, isError]);
 
 	useEffect(() => {
 		const sync = () => {
@@ -337,9 +404,16 @@ export default function ReaderPage() {
 		if (!immersiveChrome) return undefined;
 		const shell = shellRef.current;
 		if (!shell) return undefined;
-		const onMove = () => showChromeFromCursor();
-		shell.addEventListener('pointermove', onMove);
-		return () => shell.removeEventListener('pointermove', onMove);
+		// Desktop: pointermove. Mobile/PWA: tap/click (pointermove often never fires).
+		const reveal = () => showChromeFromCursor();
+		shell.addEventListener('pointermove', reveal);
+		shell.addEventListener('pointerdown', reveal);
+		shell.addEventListener('touchstart', reveal, { passive: true });
+		return () => {
+			shell.removeEventListener('pointermove', reveal);
+			shell.removeEventListener('pointerdown', reveal);
+			shell.removeEventListener('touchstart', reveal);
+		};
 	}, [immersiveChrome, showChromeFromCursor, book?.id]);
 
 	const togglePdfFitMode = useCallback(() => {
@@ -380,6 +454,25 @@ export default function ReaderPage() {
 		setText('');
 		(async () => {
 			try {
+				const preferOffline = !isOnline() || book._offline;
+				if (preferOffline && user?.id) {
+					const saved = await getSavedBookContent(user.id, book.id);
+					if (cancelled) return;
+					if (saved) {
+						if (isPdf || isEpub) {
+							setFileBytes(saved);
+						} else {
+							setText(saved.text || '');
+						}
+						setContentReady(true);
+						return;
+					}
+					if (!isOnline()) {
+						setLoadError('This book isn’t saved for offline.');
+						return;
+					}
+				}
+
 				if (isPdf || isEpub) {
 					const blob = await booksApi.fetchFile(book.id);
 					const buf = await blob.arrayBuffer();
@@ -389,14 +482,35 @@ export default function ReaderPage() {
 					if (!cancelled) setText(payload.text || '');
 				}
 				if (!cancelled) setContentReady(true);
+
+				if (user?.id && isOnline()) {
+					const saved = await isBookSaved(user.id, book.id);
+					if (saved && !cancelled) {
+						saveBookForOffline(book).catch(() => {});
+					}
+				}
 			} catch {
-				if (!cancelled) setLoadError('Could not load this book.');
+				if (cancelled) return;
+				if (user?.id) {
+					try {
+						const saved = await getSavedBookContent(user.id, book.id);
+						if (saved) {
+							if (isPdf || isEpub) setFileBytes(saved);
+							else setText(saved.text || '');
+							setContentReady(true);
+							return;
+						}
+					} catch {
+						/* fall through */
+					}
+				}
+				setLoadError('Could not load this book.');
 			}
 		})();
 		return () => {
 			cancelled = true;
 		};
-	}, [book?.id, isPdf, isEpub]);
+	}, [book?.id, book?._offline, isPdf, isEpub, user?.id]);
 
 	const totalPages = isPdf || isEpub ? book?.page_count || 1 : textPages.length || 1;
 	const currentPage = page == null ? 1 : Math.min(Math.max(page, 1), totalPages);
@@ -532,19 +646,24 @@ export default function ReaderPage() {
 		return () => window.removeEventListener('keydown', onKey);
 	}, [canNext, canPrev, goNext, goPrev, navigate, toggleFullscreen]);
 
-	if (isLoading) {
+	if ((isLoading || offlineResolving) && !book) {
 		return (
 			<div className="reader-shell flex items-center justify-center">
 				<LoadingScreen label="Opening book…" />
 			</div>
 		);
 	}
-	if (isError || !book) {
+	if (!book) {
+		const offlineMiss = !online || isError;
 		return (
 			<div className="reader-shell flex items-center justify-center p-8">
 				<EmptyState
-					title="Book not found"
-					description="This book is missing or you do not have access."
+					title={offlineMiss ? 'Unavailable offline' : 'Book not found'}
+					description={
+						offlineMiss
+							? 'Save this book for offline reading while you’re online, then try again.'
+							: 'This book is missing or you do not have access.'
+					}
 					action={
 						<Link to="/library">
 							<Button variant="secondary">Back to library</Button>
@@ -554,6 +673,11 @@ export default function ReaderPage() {
 			</div>
 		);
 	}
+
+	const toggleOfflineSave = async () => {
+		if (isSavedOffline) await removeBookForOffline(book.id, book.title);
+		else await saveBookForOffline(book);
+	};
 
 	const spreadClass = isPdf
 		? `reader-spread reader-spread-pdf${twoPage ? '' : ' reader-spread-single'}${
@@ -571,7 +695,27 @@ export default function ReaderPage() {
 		hasBookmark &&
 		(libraryPage === bookmarkPage ||
 			(twoPage && !isEpub && (leftPage === bookmarkPage || rightPage === bookmarkPage)));
+	const offlineSaveButton = (
+		<button
+			type="button"
+			className="reader-nav inline-flex h-9 w-9 items-center justify-center rounded-md"
+			onClick={toggleOfflineSave}
+			aria-label={isSavedOffline ? 'Remove offline copy' : 'Save for offline'}
+			title={isSavedOffline ? 'Remove offline copy' : 'Save for offline'}
+		>
+			{isSavedOffline ? (
+				<WifiOff size={16} strokeWidth={1.5} />
+			) : (
+				<Download size={16} strokeWidth={1.5} />
+			)}
+		</button>
+	);
+
 	const toggleBookmark = () => {
+		if (readingOffline) {
+			toast.info('Bookmarks need a network connection.');
+			return;
+		}
 		if (bookmarkBook.isPending || page == null) return;
 		if (hasBookmark) {
 			bookmarkBook.mutate({ id: book.id, page: null });
@@ -608,7 +752,7 @@ export default function ReaderPage() {
 			}`}
 			style={onBookmarkedPage ? { color: 'var(--primary)' } : undefined}
 			onClick={toggleBookmark}
-			disabled={bookmarkBook.isPending || page == null}
+			disabled={bookmarkBook.isPending || page == null || readingOffline}
 			aria-label={
 				hasBookmark
 					? onBookmarkedPage
@@ -746,7 +890,7 @@ export default function ReaderPage() {
 					<div className="pointer-events-none absolute inset-x-0 top-0 h-36 bg-linear-to-b from-black/85 via-black/50 to-transparent" />
 					<div className="pointer-events-none absolute inset-x-0 bottom-0 h-36 bg-linear-to-t from-black/85 via-black/50 to-transparent" />
 
-					<div className="pointer-events-auto absolute inset-x-0 top-0 z-30 flex items-start justify-between gap-4 px-5 pt-5 pb-3">
+					<div className="pointer-events-auto absolute inset-x-0 top-0 z-30 flex items-start justify-between gap-4 px-5 pt-[max(1.25rem,env(safe-area-inset-top))] pb-3">
 						<Link
 							to="/library"
 							aria-label="Library"
@@ -761,6 +905,7 @@ export default function ReaderPage() {
 						<div className="relative z-30 flex shrink-0 items-center gap-3">
 							{elapsedLabel}
 							{timerRing}
+							{offlineSaveButton}
 							{bookmarkButton}
 						</div>
 					</div>
@@ -786,7 +931,7 @@ export default function ReaderPage() {
 						<ChevronRight size={28} strokeWidth={1.5} />
 					</button>
 
-					<div className="pointer-events-auto absolute inset-x-0 bottom-0 z-30 flex items-end justify-between gap-4 px-5 pt-3 pb-5">
+					<div className="pointer-events-auto absolute inset-x-0 bottom-0 z-30 flex items-end justify-between gap-4 px-5 pt-3 pb-[max(1.25rem,env(safe-area-inset-bottom))]">
 						<div
 							className={`min-w-0 flex-1 text-[12px] text-[#8a8a8a] ${
 								footerSplit ? 'grid grid-cols-2' : 'flex justify-between'
@@ -812,11 +957,11 @@ export default function ReaderPage() {
 
 	return (
 		<div ref={shellRef} className="reader-shell relative flex flex-col">
-			<header className="relative shrink-0 px-16 pt-5 pb-2">
+			<header className="relative shrink-0 px-16 pt-[max(1.25rem,env(safe-area-inset-top))] pb-2">
 				<Link
 					to="/library"
 					aria-label="Library"
-					className="reader-nav absolute top-5 left-5 inline-flex items-center gap-1 text-xs"
+					className="reader-nav absolute top-[max(1.25rem,env(safe-area-inset-top))] left-5 inline-flex items-center gap-1 text-xs"
 				>
 					<ArrowLeft size={14} />
 					<span className="hidden sm:inline">Library</span>
@@ -824,9 +969,10 @@ export default function ReaderPage() {
 				<p className="font-reader truncate text-center text-[12px] tracking-wide text-[#9a9a9a]">
 					{book.title}
 				</p>
-				<div className="absolute top-5 right-5 flex items-center gap-3">
+				<div className="absolute top-[max(1.25rem,env(safe-area-inset-top))] right-5 flex items-center gap-3">
 					{elapsedLabel}
 					{timerRing}
+					{offlineSaveButton}
 					{bookmarkButton}
 				</div>
 			</header>

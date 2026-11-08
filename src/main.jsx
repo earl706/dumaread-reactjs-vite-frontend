@@ -4,6 +4,9 @@ import { createRoot } from 'react-dom/client';
 import './index.css';
 import App from './App.jsx';
 import { isMobileApp } from './lib/desktop';
+import { registerOfflineServiceWorker } from './lib/offline/registerSW';
+
+registerOfflineServiceWorker();
 
 if (isMobileApp()) {
 	document.documentElement.classList.add('mobile-app');

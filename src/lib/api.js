@@ -1,6 +1,7 @@
 import axios from 'axios';
 
 import { isMobileApp } from './desktop';
+import { isNetworkError } from './offline/connectivity';
 
 // CUSTOMIZE: rename these keys. Mobile uses a separate namespace so a
 // WKWebView session does not collide with Safari / desktop tokens.
@@ -85,7 +86,11 @@ export const tokenStore = {
 
 const baseURL = import.meta.env.VITE_API_BASE_URL || '/api';
 
-export const api = axios.create({ baseURL });
+export const api = axios.create({
+	baseURL,
+	// Avoid infinite "Restoring session…" on phones when the API host is wrong/unreachable.
+	timeout: 15_000
+});
 
 api.interceptors.request.use((config) => {
 	const token = tokenStore.access;
@@ -142,9 +147,12 @@ api.interceptors.response.use(
 				return api(original);
 			} catch (refreshError) {
 				refreshPromise = null;
-				tokenStore.clear();
-				if (typeof window !== 'undefined' && !isMobileApp()) {
-					window.location.assign('/login');
+				// Keep tokens on transport failure so offline session restore still works.
+				if (!isNetworkError(refreshError)) {
+					tokenStore.clear();
+					if (typeof window !== 'undefined' && !isMobileApp()) {
+						window.location.assign('/login');
+					}
 				}
 				return Promise.reject(refreshError);
 			}

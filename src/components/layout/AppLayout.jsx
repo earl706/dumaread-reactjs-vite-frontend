@@ -7,6 +7,7 @@ import { LoadingScreen } from '../ui';
 import { useAuthStore } from '../../stores/authStore';
 import { CommandPalette } from './CommandPalette';
 import { MobileTabBar } from './MobileTabBar';
+import { OfflineBanner } from './OfflineBanner';
 import { Sidebar } from './Sidebar';
 import { Topbar } from './Topbar';
 
@@ -22,6 +23,7 @@ export function AppLayout() {
 			{!mobile && <Sidebar />}
 			<div className="flex min-w-0 flex-1 flex-col">
 				{!mobile && <Topbar />}
+				<OfflineBanner />
 				<main
 					className={
 						mobile

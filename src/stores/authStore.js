@@ -2,11 +2,18 @@ import { create } from 'zustand';
 
 import { api, tokenStore } from '../lib/api';
 import { effectiveRememberMe } from '../lib/desktop';
+import { isNetworkError, isOnline } from '../lib/offline/connectivity';
+import { clearCachedUser, readCachedUser, writeCachedUser } from '../lib/sessionUserCache';
 
 function isTransientAuthError(err) {
 	if (!err?.response) return true;
 	const status = err.response.status;
 	return status >= 500 || status === 429;
+}
+
+function isHardAuthFailure(err) {
+	const status = err?.response?.status;
+	return status === 401 || status === 403;
 }
 
 const baseURL = import.meta.env.VITE_API_BASE_URL || '/api';
@@ -21,6 +28,7 @@ function applySession(set, data) {
 		};
 	}
 	tokenStore.set({ access: data.access, refresh: data.refresh });
+	if (data.user) writeCachedUser(data.user);
 	return {
 		user: data.user,
 		status: 'authenticated',
@@ -30,6 +38,28 @@ function applySession(set, data) {
 		error: null,
 		pendingVerificationEmail: null
 	};
+}
+
+function restoreCachedSession(set) {
+	const cached = readCachedUser();
+	if (!cached) return false;
+	set({ user: cached, status: 'authenticated', error: null });
+	return true;
+}
+
+function clearSession(set, extra = {}) {
+	tokenStore.clear();
+	clearCachedUser();
+	set({
+		user: null,
+		status: 'unauthenticated',
+		mfaRequired: false,
+		mfaToken: null,
+		pendingRemember: true,
+		pendingVerificationEmail: null,
+		error: null,
+		...extra
+	});
 }
 
 export const useAuthStore = create((set, get) => ({
@@ -165,28 +195,47 @@ export const useAuthStore = create((set, get) => ({
 		}
 	},
 
+	/**
+	 * Restore session from tokens + /auth/me/.
+	 * When offline (or /auth/me/ is unreachable), reuse the last cached user so the
+	 * SPA can open and navigate; only saved-offline books are readable.
+	 */
 	async bootstrap() {
 		if (!tokenStore.access && !tokenStore.refresh) {
+			clearCachedUser();
 			set({ status: 'unauthenticated' });
 			return;
 		}
 		set({ status: 'loading' });
-		const attempts = 8;
+
+		// Fast path: browser already reports offline — don't wait on retries.
+		if (!isOnline()) {
+			if (restoreCachedSession(set)) return;
+			// navigator.onLine can lie; fall through to one attempt below.
+		}
+
+		const attempts = isOnline() ? 8 : 1;
 		for (let i = 0; i < attempts; i += 1) {
 			try {
 				const { data } = await api.get('/auth/me/');
+				writeCachedUser(data);
 				set({ user: data, status: 'authenticated', error: null });
 				return;
 			} catch (err) {
-				const status = err.response?.status;
-				if (status === 401 || status === 403) {
-					tokenStore.clear();
-					set({ user: null, status: 'unauthenticated' });
+				if (isHardAuthFailure(err)) {
+					clearSession(set);
 					return;
 				}
 				if (i < attempts - 1 && isTransientAuthError(err)) {
 					await new Promise((resolve) => setTimeout(resolve, 400));
 					continue;
+				}
+				// Network / server blip: keep tokens and restore last known user.
+				if (
+					(isNetworkError(err) || isTransientAuthError(err) || !isOnline()) &&
+					restoreCachedSession(set)
+				) {
+					return;
 				}
 				set({ user: null, status: 'unauthenticated' });
 				return;
@@ -194,8 +243,33 @@ export const useAuthStore = create((set, get) => ({
 		}
 	},
 
+	/** Refresh /auth/me/ after reconnect; hard 401/403 clears the session. */
+	async revalidate() {
+		if (!tokenStore.access && !tokenStore.refresh) return;
+		if (!isOnline()) return;
+		try {
+			const { data } = await api.get('/auth/me/');
+			writeCachedUser(data);
+			set({
+				user: data,
+				status: 'authenticated',
+				error: null,
+				mfaRequired: false,
+				mfaToken: null
+			});
+		} catch (err) {
+			if (isHardAuthFailure(err)) {
+				clearSession(set);
+			}
+		}
+	},
+
 	updateUser(partial) {
-		set((s) => ({ user: { ...s.user, ...partial } }));
+		set((s) => {
+			const user = { ...s.user, ...partial };
+			writeCachedUser(user);
+			return { user };
+		});
 	},
 
 	clearMfa() {
@@ -209,14 +283,6 @@ export const useAuthStore = create((set, get) => ({
 	},
 
 	logout() {
-		tokenStore.clear();
-		set({
-			user: null,
-			status: 'unauthenticated',
-			mfaRequired: false,
-			mfaToken: null,
-			pendingRemember: true,
-			pendingVerificationEmail: null
-		});
+		clearSession(set);
 	}
 }));

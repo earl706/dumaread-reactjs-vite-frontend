@@ -31,7 +31,8 @@ export const booksApi = {
 			onSuccess: (data, vars, ctx) => {
 				qc.invalidateQueries({ queryKey: [booksHooks.key] });
 				if (vars?.id && data) {
-					qc.setQueryData(booksHooks.detailKey(vars.id), data);
+					const { user_goal_progress: _userGoalProgress, ...book } = data;
+					qc.setQueryData(booksHooks.detailKey(vars.id), book);
 				}
 				onSuccess?.(data, vars, ctx);
 			},

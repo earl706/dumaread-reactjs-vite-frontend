@@ -1,8 +1,13 @@
 import { useNavigate } from 'react-router-dom';
 import { Menu, Search } from 'lucide-react';
 
+import { useEffect } from 'react';
+
+import { useMergedUserGoalProgress } from '../../hooks/useMergedUserGoalProgress';
+import { setUserBaseline } from '../../lib/offline/savedBooks';
 import { booksApi } from '../../lib/resources';
 import { useAuthStore } from '../../stores/authStore';
+import { useOfflineStore } from '../../stores/offlineStore';
 import { readingTimer } from '../../stores/readingTimer';
 import { useUIStore } from '../../stores/uiStore';
 import { Avatar, Button, GoalProgressRings } from '../ui';
@@ -12,11 +17,31 @@ import { TimerButton } from './TimerButton';
 export function Topbar() {
 	const navigate = useNavigate();
 	const user = useAuthStore((s) => s.user);
+	const online = useOfflineStore((s) => s.online);
 	const { toggleSidebar, openPalette } = useUIStore();
 	const { data: stats } = booksApi.useStats({
-		enabled: Boolean(user),
-		refetchInterval: 60_000
+		enabled: Boolean(user) && online,
+		refetchInterval: online ? 60_000 : false,
+		retry: online ? 1 : 0
 	});
+	const goalProgress = useMergedUserGoalProgress(stats?.goal_progress);
+
+	useEffect(() => {
+		if (!user?.id || !stats?.goal_progress) return;
+		setUserBaseline(user.id, {
+			goal_daily_minutes: user.goal_daily_minutes ?? null,
+			goal_weekly_minutes: user.goal_weekly_minutes ?? null,
+			goal_monthly_minutes: user.goal_monthly_minutes ?? null,
+			goal_progress: stats.goal_progress,
+			updatedAt: Date.now()
+		}).catch(() => {});
+	}, [
+		user?.id,
+		user?.goal_daily_minutes,
+		user?.goal_weekly_minutes,
+		user?.goal_monthly_minutes,
+		stats?.goal_progress
+	]);
 
 	return (
 		<header className="border-line bg-surface/80 sticky top-0 z-30 flex h-16 items-center gap-2 border-b px-4 backdrop-blur">
@@ -43,7 +68,7 @@ export function Topbar() {
 
 			<div className="flex flex-1 items-center justify-end gap-1">
 				<GoalProgressRings
-					progress={stats?.goal_progress}
+					progress={goalProgress}
 					size={36}
 					stroke={3}
 					gap={2}

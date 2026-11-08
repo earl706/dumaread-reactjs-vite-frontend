@@ -221,10 +221,11 @@ html.reader-lock .reader-shell {
   width: 100%;
 }
 
-/* Immersive EPUB: keep prior vertical chrome spacing; no horizontal inset. */
+/* Immersive EPUB: keep prior vertical chrome spacing; no horizontal inset.
+   Include safe-area so homescreen/PWA chrome clears the status bar / home indicator. */
 .reader-epub-inset {
-  padding-top: 3.25rem; /* header pt-5 + title + pb-2 + main py-3 */
-  padding-bottom: 3.4rem; /* main py-3 + footer pt-2 + label + pb-5 */
+  padding-top: calc(3.25rem + env(safe-area-inset-top, 0px));
+  padding-bottom: calc(3.4rem + env(safe-area-inset-bottom, 0px));
   padding-left: 0;
   padding-right: 0;
 }
