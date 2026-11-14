@@ -3,7 +3,7 @@ import { Outlet } from 'react-router-dom';
 
 import { isMobileApp } from '../../lib/desktop';
 import { MfaPromptModal, MfaSetupModal } from '../auth/MfaModals';
-import { LoadingScreen } from '../ui';
+import { FadeIn, LoadingScreen } from '../ui';
 import { useAuthStore } from '../../stores/authStore';
 import { CommandPalette } from './CommandPalette';
 import { MobileTabBar } from './MobileTabBar';
@@ -19,9 +19,9 @@ export function AppLayout() {
 	const [setupOpen, setSetupOpen] = useState(false);
 
 	return (
-		<div className="bg-bg flex h-full overflow-hidden">
+		<div className="bg-bg flex h-full min-h-0 overflow-hidden">
 			{!mobile && <Sidebar />}
-			<div className="flex min-w-0 flex-1 flex-col">
+			<div className="flex min-h-0 min-w-0 flex-1 flex-col">
 				{!mobile && <Topbar />}
 				<OfflineBanner />
 				<main
@@ -34,7 +34,9 @@ export function AppLayout() {
 				>
 					<div className="mx-auto w-full max-w-6xl px-4 py-6 sm:px-4">
 						<Suspense fallback={<LoadingScreen />}>
-							<Outlet />
+							<FadeIn>
+								<Outlet />
+							</FadeIn>
 						</Suspense>
 					</div>
 				</main>

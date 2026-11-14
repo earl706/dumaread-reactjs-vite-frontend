@@ -4,8 +4,14 @@ export { Badge } from './Badge';
 export { STATUS_TONE } from '../../lib/status';
 export { Input, Textarea, Select } from './Field';
 export { Modal } from './Modal';
-export { LoadingScreen, Skeleton, EmptyState } from './feedback';
-export { ProgressBar, ProgressRing, GoalProgressRings } from './Progress';
+export { AppMark } from './AppMark';
+export { LoadingScreen, Skeleton, EmptyState, FadeIn, LoadSwap, LOAD_FADE } from './feedback';
+export {
+	ProgressBar,
+	ProgressRing,
+	GoalProgressRings,
+	formatGoalProgressTooltip
+} from './Progress';
 export { Toasts } from './Toasts';
 export { StatCard } from './StatCard';
 export { Avatar } from './Avatar';

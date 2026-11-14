@@ -1,9 +1,10 @@
 import { NavLink } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { PanelLeft, Zap } from 'lucide-react';
+import { PanelLeft } from 'lucide-react';
 
 import { cn } from '../../lib/format';
 import { useUIStore } from '../../stores/uiStore';
+import { AppMark } from '../ui';
 import { navGroups } from './navItems';
 
 function IconWell({ collapsed, active = false, children }) {
@@ -84,25 +85,13 @@ function CollapseToggle({ collapsed }) {
 	);
 }
 
-function AppMark({ size = 36, iconSize = 18 }) {
-	return (
-		<div
-			className="bg-primary text-primary-fg flex shrink-0 items-center justify-center rounded-sm"
-			style={{ width: size, height: size }}
-			aria-hidden
-		>
-			<Zap size={iconSize} />
-		</div>
-	);
-}
-
 function SidebarContent({ collapsed = false, showCollapseToggle = false }) {
 	return (
 		<div className={cn('flex h-full flex-col', collapsed ? 'px-2 py-4' : 'p-4')}>
 			<div className={cn('flex flex-col gap-2', collapsed && 'items-center')}>
 				<div className={cn('flex items-center pt-1', collapsed ? 'justify-center' : 'gap-2 px-2')}>
 					<AppMark size={36} iconSize={18} />
-					{!collapsed && <span className="text-fg text-lg font-bold tracking-tight">DumaRead</span>}
+					{!collapsed && <span className="text-fg text-lg font-bold tracking-[0.08em]">DUMAS</span>}
 				</div>
 				{showCollapseToggle && <CollapseToggle collapsed={collapsed} />}
 			</div>
@@ -127,7 +116,7 @@ function SidebarContent({ collapsed = false, showCollapseToggle = false }) {
 				))}
 			</nav>
 
-			{!collapsed && <p className="text-muted mt-auto px-3 text-xs">DumaRead</p>}
+			{!collapsed && <p className="text-muted mt-auto px-3 text-xs tracking-[0.12em]">DUMAS</p>}
 		</div>
 	);
 }
@@ -139,7 +128,7 @@ export function Sidebar() {
 		<>
 			<aside
 				className={cn(
-					'border-line bg-surface hidden shrink-0 border-r transition-[width] duration-200 ease-out lg:block',
+					'border-line bg-surface hidden h-full min-h-0 shrink-0 self-stretch overflow-y-auto border-r transition-[width] duration-200 ease-out lg:block',
 					sidebarCollapsed ? 'w-24' : 'w-64'
 				)}
 			>

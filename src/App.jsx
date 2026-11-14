@@ -10,14 +10,16 @@ import { AppLayout } from './components/layout/AppLayout';
 import { ProtectedRoute } from './components/layout/ProtectedRoute';
 import { RouteErrorBoundary } from './components/layout/RouteErrorBoundary';
 import { TimerEngine } from './components/layout/TimerEngine';
-import { LoadingScreen, Toasts } from './components/ui';
+import { FadeIn, LoadingScreen, Toasts } from './components/ui';
 import { publicRoutes, appRoutes, readerRoutes } from './pages/routes';
 import { readingTimer } from './stores/readingTimer';
 
 function ThemedSuspense({ children }) {
 	return (
 		<RouteErrorBoundary>
-			<Suspense fallback={<LoadingScreen label="Loading…" />}>{children}</Suspense>
+			<Suspense fallback={<LoadingScreen label="Loading…" />}>
+				<FadeIn className="h-full">{children}</FadeIn>
+			</Suspense>
 		</RouteErrorBoundary>
 	);
 }

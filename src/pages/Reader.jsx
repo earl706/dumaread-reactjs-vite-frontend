@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
+import { motion } from 'framer-motion';
 import {
 	ArrowLeft,
 	Bookmark,
@@ -41,8 +42,9 @@ import { toast } from '../stores/toastStore';
 import { selectIntervalActive } from '../stores/createTimerStore';
 import { readingTimer } from '../stores/readingTimer';
 import { useReadingSession } from '../hooks/useReadingSession';
+import { useReaderSwipe } from '../hooks/useReaderSwipe';
 import { EpubReader } from '../components/books/EpubReader';
-import { Button, EmptyState, LoadingScreen, ProgressRing } from '../components/ui';
+import { Button, EmptyState, LOAD_FADE, LoadingScreen, ProgressRing } from '../components/ui';
 
 GlobalWorkerOptions.workerSrc = pdfWorker;
 
@@ -118,6 +120,46 @@ function PageProse({ blocks }) {
 	);
 }
 
+function usePdfDocument(data, enabled) {
+	const [pdf, setPdf] = useState(null);
+	const [error, setError] = useState('');
+
+	useEffect(() => {
+		if (!enabled || !data) {
+			setPdf(null);
+			setError('');
+			return undefined;
+		}
+		let cancelled = false;
+		let loaded;
+		const task = getDocument({ data });
+		task.promise
+			.then((doc) => {
+				if (cancelled) {
+					doc.destroy();
+					return;
+				}
+				loaded = doc;
+				setPdf(doc);
+				setError('');
+			})
+			.catch(() => {
+				if (!cancelled) {
+					setError('Could not open this PDF.');
+					setPdf(null);
+				}
+			});
+		return () => {
+			cancelled = true;
+			task.destroy();
+			loaded?.destroy();
+			setPdf(null);
+		};
+	}, [data, enabled]);
+
+	return { pdf, error };
+}
+
 function PdfCanvas({ pdf, pageNumber, fitMode }) {
 	const canvasRef = useRef(null);
 	const [error, setError] = useState('');
@@ -177,55 +219,55 @@ function PdfCanvas({ pdf, pageNumber, fitMode }) {
 	);
 }
 
-function PdfSpread({ data, leftPage, rightPage, twoPage, fitMode }) {
-	const [pdf, setPdf] = useState(null);
-	const [error, setError] = useState('');
-
-	useEffect(() => {
-		if (!data) return undefined;
-		let cancelled = false;
-		let loaded;
-		const task = getDocument({ data });
-		task.promise
-			.then((doc) => {
-				if (cancelled) {
-					doc.destroy();
-					return;
-				}
-				loaded = doc;
-				setPdf(doc);
-			})
-			.catch(() => {
-				if (!cancelled) setError('Could not open this PDF.');
-			});
-		return () => {
-			cancelled = true;
-			task.destroy();
-			loaded?.destroy();
-			setPdf(null);
-		};
-	}, [data]);
-
+function PdfSpread({ pdf, error, leftPage, rightPage, twoPage, fitMode }) {
 	if (error) {
 		return <p className="p-8 text-center text-sm text-red-400">{error}</p>;
+	}
+	if (!pdf) {
+		return (
+			<div className="reader-page flex items-center justify-center">
+				<LoadingScreen label="Rendering PDF…" />
+			</div>
+		);
 	}
 	return (
 		<>
 			<div className="reader-page flex items-center justify-center">
-				{pdf ? (
+				<div className="flex h-full w-full items-center justify-center">
 					<PdfCanvas pdf={pdf} pageNumber={leftPage} fitMode={fitMode} />
-				) : (
-					<LoadingScreen label="Rendering PDF…" />
-				)}
+				</div>
 			</div>
 			{twoPage ? (
 				<div className="reader-page flex items-center justify-center">
-					{pdf && rightPage ? (
-						<PdfCanvas pdf={pdf} pageNumber={rightPage} fitMode={fitMode} />
+					{rightPage ? (
+						<div className="flex h-full w-full items-center justify-center">
+							<PdfCanvas pdf={pdf} pageNumber={rightPage} fitMode={fitMode} />
+						</div>
 					) : null}
 				</div>
 			) : null}
 		</>
+	);
+}
+
+/** High-contrast EPUB peek stand-in (iframe can’t show two locations at once). */
+function EpubPeekUnderlay({ title }) {
+	return (
+		<div className="reader-swipe-underlay-epub-page">
+			<p className="reader-swipe-underlay-epub-kicker">{title || 'Reading'}</p>
+			<p>
+				The next page is turning into place. Keep dragging to reveal more of the spread, then
+				release to finish the turn. Edge taps and keyboard arrows still work the same way.
+			</p>
+			<p>
+				Typography here matches the reader so the underlay stays readable while the current page
+				slides away—similar to the layered page feel in Apple Books.
+			</p>
+			<p>
+				When you commit the swipe, the real chapter content settles in with a short emphasized fade
+				so the handoff does not flash or jump.
+			</p>
+		</div>
 	);
 }
 
@@ -262,10 +304,16 @@ export default function ReaderPage() {
 		enabled: Boolean(id) && online
 	});
 	const bookmarkBook = booksApi.useBookmark({
-		onSuccess: (data) => {
-			toast.success(
-				data?.bookmark_page ? `Bookmarked page ${data.bookmark_page}.` : 'Bookmark removed.'
-			);
+		onSuccess: (data, vars) => {
+			if (!data?.bookmark_page) {
+				toast.success('Bookmark removed.');
+				return;
+			}
+			if (vars?.movedFrom != null && vars.movedFrom !== data.bookmark_page) {
+				toast.success(`Moved bookmark to page ${data.bookmark_page}.`);
+				return;
+			}
+			toast.success(`Bookmarked page ${data.bookmark_page}.`);
 		},
 		onError: () => toast.error('Could not update bookmark.')
 	});
@@ -372,6 +420,10 @@ export default function ReaderPage() {
 	const isEpub = book?.format === 'epub';
 	const isTxt = book?.format === 'txt';
 	const immersiveChrome = isPdf || isEpub;
+	const { pdf: pdfDoc, error: pdfDocError } = usePdfDocument(
+		fileBytes,
+		Boolean(isPdf && contentReady && fileBytes)
+	);
 
 	const showChromeFromCursor = useCallback(() => {
 		if (!immersiveChrome) return;
@@ -399,22 +451,6 @@ export default function ReaderPage() {
 			}
 		};
 	}, [immersiveChrome, book?.id]);
-
-	useEffect(() => {
-		if (!immersiveChrome) return undefined;
-		const shell = shellRef.current;
-		if (!shell) return undefined;
-		// Desktop: pointermove. Mobile/PWA: tap/click (pointermove often never fires).
-		const reveal = () => showChromeFromCursor();
-		shell.addEventListener('pointermove', reveal);
-		shell.addEventListener('pointerdown', reveal);
-		shell.addEventListener('touchstart', reveal, { passive: true });
-		return () => {
-			shell.removeEventListener('pointermove', reveal);
-			shell.removeEventListener('pointerdown', reveal);
-			shell.removeEventListener('touchstart', reveal);
-		};
-	}, [immersiveChrome, showChromeFromCursor, book?.id]);
 
 	const togglePdfFitMode = useCallback(() => {
 		setPdfFitMode((prev) => {
@@ -593,10 +629,52 @@ export default function ReaderPage() {
 	const playPageTurn = useCallback((dir) => {
 		const el = spreadRef.current;
 		if (!el) return;
-		el.classList.remove('reader-turn-next', 'reader-turn-prev');
+		el.classList.remove('reader-turn-next', 'reader-turn-prev', 'reader-arrive');
 		void el.offsetWidth;
 		el.classList.add(dir > 0 ? 'reader-turn-next' : 'reader-turn-prev');
 	}, []);
+
+	const [peekHold, setPeekHold] = useState(null);
+	const [underlayCover, setUnderlayCover] = useState(false);
+	const peekHoldTimerRef = useRef(null);
+
+	const playArrive = useCallback(() => {
+		const el = spreadRef.current;
+		if (!el) return;
+		el.classList.remove('reader-arrive');
+		void el.offsetWidth;
+		el.classList.add('reader-arrive');
+	}, []);
+
+	const onCommitHold = useCallback(
+		(dir) => {
+			const nextLeft = dir > 0 ? leftPage + turn : leftPage - turn;
+			const nextRight = twoPage && nextLeft + 1 <= totalPages ? nextLeft + 1 : null;
+			setPeekHold({ dir, left: nextLeft, right: nextRight });
+			setUnderlayCover(true);
+		},
+		[leftPage, turn, twoPage, totalPages]
+	);
+
+	const onSwipeCommitted = useCallback(() => {
+		playArrive();
+		// Keep covering underlay briefly, then fade it away over the new page.
+		if (peekHoldTimerRef.current) window.clearTimeout(peekHoldTimerRef.current);
+		peekHoldTimerRef.current = window.setTimeout(() => {
+			setUnderlayCover(false);
+			peekHoldTimerRef.current = window.setTimeout(() => {
+				setPeekHold(null);
+				peekHoldTimerRef.current = null;
+			}, 340);
+		}, 40);
+	}, [playArrive]);
+
+	useEffect(
+		() => () => {
+			if (peekHoldTimerRef.current) window.clearTimeout(peekHoldTimerRef.current);
+		},
+		[]
+	);
 
 	const goPrev = useCallback(() => {
 		playPageTurn(-1);
@@ -614,8 +692,68 @@ export default function ReaderPage() {
 		}
 		go(leftPage + turn);
 	}, [go, isEpub, leftPage, playPageTurn, turn]);
+	/** Swipe commit already animated the sheet — skip dissolve; arrive after settle. */
+	const swipeGoPrev = useCallback(() => {
+		if (isEpub) {
+			epubRef.current?.prev();
+			return;
+		}
+		go(leftPage - turn);
+	}, [go, isEpub, leftPage, turn]);
+	const swipeGoNext = useCallback(() => {
+		if (isEpub) {
+			epubRef.current?.next();
+			return;
+		}
+		go(leftPage + turn);
+	}, [go, isEpub, leftPage, turn]);
 	const canPrev = isEpub ? !epubAtStart : leftPage > 1;
 	const canNext = isEpub ? !epubAtEnd : footerPage < totalPages;
+
+	const swipeEnabled = Boolean(book) && contentReady && !loadError && page != null;
+	const swipe = useReaderSwipe({
+		enabled: swipeEnabled,
+		canPrev,
+		canNext,
+		onPrev: swipeGoPrev,
+		onNext: swipeGoNext,
+		onTap: immersiveChrome ? showChromeFromCursor : undefined,
+		onCommitHold,
+		onCommitted: onSwipeCommitted
+	});
+
+	const livePeekDir = swipe.peekDir;
+	const peekDir = peekHold?.dir || livePeekDir;
+	const showPeek =
+		Boolean(peekHold) ||
+		(livePeekDir !== 0 && ((livePeekDir === 1 && canNext) || (livePeekDir === -1 && canPrev)));
+	const peekLeftPage = peekHold
+		? peekHold.left
+		: showPeek
+			? livePeekDir === 1
+				? leftPage + turn
+				: leftPage - turn
+			: null;
+	const peekRightPage = peekHold
+		? peekHold.right
+		: showPeek && twoPage && peekLeftPage != null && peekLeftPage + 1 <= totalPages
+			? peekLeftPage + 1
+			: null;
+	const swipeGestureActiveRef = useRef(swipe.isGestureActive);
+	swipeGestureActiveRef.current = swipe.isGestureActive;
+
+	useEffect(() => {
+		if (!immersiveChrome) return undefined;
+		const shell = shellRef.current;
+		if (!shell) return undefined;
+		// Desktop hover reveals chrome; taps/drags are handled by the swipe surface.
+		const reveal = () => {
+			if (swipeGestureActiveRef.current()) return;
+			showChromeFromCursor();
+		};
+		shell.addEventListener('pointermove', reveal);
+		return () => shell.removeEventListener('pointermove', reveal);
+	}, [immersiveChrome, showChromeFromCursor, book?.id]);
 
 	useEffect(() => {
 		const onKey = (e) => {
@@ -648,15 +786,26 @@ export default function ReaderPage() {
 
 	if ((isLoading || offlineResolving) && !book) {
 		return (
-			<div className="reader-shell flex items-center justify-center">
+			<motion.div
+				className="reader-shell flex items-center justify-center"
+				initial={{ opacity: 0 }}
+				animate={{ opacity: 1 }}
+				exit={{ opacity: 0 }}
+				transition={LOAD_FADE}
+			>
 				<LoadingScreen label="Opening book…" />
-			</div>
+			</motion.div>
 		);
 	}
 	if (!book) {
 		const offlineMiss = !online || isError;
 		return (
-			<div className="reader-shell flex items-center justify-center p-8">
+			<motion.div
+				className="reader-shell flex items-center justify-center p-8"
+				initial={{ opacity: 0 }}
+				animate={{ opacity: 1 }}
+				transition={LOAD_FADE}
+			>
 				<EmptyState
 					title={offlineMiss ? 'Unavailable offline' : 'Book not found'}
 					description={
@@ -670,7 +819,7 @@ export default function ReaderPage() {
 						</Link>
 					}
 				/>
-			</div>
+			</motion.div>
 		);
 	}
 
@@ -717,8 +866,14 @@ export default function ReaderPage() {
 			return;
 		}
 		if (bookmarkBook.isPending || page == null) return;
+		// Already on the bookmarked page (or its two-page spread): leave it set.
+		if (onBookmarkedPage) return;
 		if (hasBookmark) {
-			bookmarkBook.mutate({ id: book.id, page: null });
+			bookmarkBook.mutate({
+				id: book.id,
+				page: trackedPage,
+				movedFrom: bookmarkPage
+			});
 			return;
 		}
 		bookmarkBook.mutate({ id: book.id, page: trackedPage });
@@ -756,8 +911,8 @@ export default function ReaderPage() {
 			aria-label={
 				hasBookmark
 					? onBookmarkedPage
-						? 'Remove bookmark from this page'
-						: `Bookmark on page ${bookmarkPage}; click to remove`
+						? `Bookmarked page ${bookmarkPage}`
+						: `Move bookmark to this page (from page ${bookmarkPage})`
 					: 'Bookmark this page'
 			}
 			aria-pressed={onBookmarkedPage}
@@ -765,7 +920,7 @@ export default function ReaderPage() {
 				hasBookmark
 					? onBookmarkedPage
 						? `Bookmarked (page ${bookmarkPage})`
-						: `Bookmark on page ${bookmarkPage}`
+						: 'Move bookmark to this page'
 					: 'Bookmark this page'
 			}
 		>
@@ -817,17 +972,14 @@ export default function ReaderPage() {
 		</button>
 	);
 
-	const contentBody = loadError ? (
-		<EmptyState title="Could not open this file" description={loadError} />
-	) : !contentReady ? (
-		<LoadingScreen label="Loading pages…" />
-	) : (
-		<div ref={spreadRef} className={spreadClass}>
+	const renderSpread = (spreadLeft, spreadRight, ref) => (
+		<div ref={ref} className={spreadClass}>
 			{isPdf ? (
 				<PdfSpread
-					data={fileBytes}
-					leftPage={leftPage}
-					rightPage={rightPage}
+					pdf={pdfDoc}
+					error={pdfDocError}
+					leftPage={spreadLeft}
+					rightPage={spreadRight}
 					twoPage={twoPage}
 					fitMode={pdfFitMode}
 				/>
@@ -853,17 +1005,78 @@ export default function ReaderPage() {
 					onPointerActivity={showChromeFromCursor}
 				/>
 			) : (
-				<TextSpread pages={textPages} leftPage={leftPage} rightPage={rightPage} twoPage={twoPage} />
+				<TextSpread
+					pages={textPages}
+					leftPage={spreadLeft}
+					rightPage={spreadRight}
+					twoPage={twoPage}
+				/>
 			)}
 		</div>
 	);
 
+	const underlayClass = `reader-swipe-underlay${
+		underlayCover ? ' reader-swipe-underlay-cover' : ''
+	}${underlayCover === false && peekHold ? ' reader-swipe-underlay-fade' : ''}`;
+
+	const peekUnderlay =
+		showPeek && peekLeftPage != null ? (
+			<div
+				className={`${underlayClass}${isEpub ? 'reader-swipe-underlay-epub' : ''}`}
+				aria-hidden
+				style={
+					!underlayCover && swipe.sheetActive
+						? {
+								opacity: 0.62 + swipe.dragProgress * 0.38,
+								transform: `scale(${0.975 + swipe.dragProgress * 0.025})`
+							}
+						: undefined
+				}
+			>
+				{isEpub ? (
+					<EpubPeekUnderlay title={book.title} />
+				) : (
+					renderSpread(peekLeftPage, peekRightPage)
+				)}
+			</div>
+		) : null;
+
+	const sheetClass = `reader-swipe-sheet${
+		swipe.sheetActive || underlayCover ? ' reader-swipe-sheet-active' : ''
+	}${peekDir > 0 ? ' reader-swipe-sheet-next' : peekDir < 0 ? ' reader-swipe-sheet-prev' : ''}`;
+
+	const contentBody = loadError ? (
+		<EmptyState title="Could not open this file" description={loadError} />
+	) : !contentReady ? (
+		<LoadingScreen label="Loading pages…" />
+	) : (
+		renderSpread(leftPage, rightPage, spreadRef)
+	);
+
+	const swipeStage =
+		loadError || !contentReady ? (
+			contentBody
+		) : (
+			<div className="reader-swipe-viewport">
+				{peekUnderlay}
+				<div className={sheetClass} style={swipe.contentStyle}>
+					{contentBody}
+				</div>
+			</div>
+		);
+
 	if (immersiveChrome) {
 		const chromeHidden = !chromeVisible;
 		return (
-			<div ref={shellRef} className={`reader-shell relative ${chromeHidden ? 'reader-idle' : ''}`}>
+			<motion.div
+				ref={shellRef}
+				initial={{ opacity: 0 }}
+				animate={{ opacity: 1 }}
+				transition={LOAD_FADE}
+				className={`reader-shell relative ${chromeHidden ? 'reader-idle' : ''}`}
+			>
 				<div className={`absolute inset-0 overflow-hidden ${isEpub ? 'reader-epub-inset' : ''}`}>
-					{contentBody}
+					{swipeStage}
 				</div>
 
 				<button
@@ -880,6 +1093,8 @@ export default function ReaderPage() {
 					disabled={!canNext}
 					aria-label="Next pages"
 				/>
+				{/* Above PDF/EPUB content: drag turns pages; tap reveals chrome when idle. */}
+				<div className="reader-swipe-surface" {...swipe.surfaceProps} aria-hidden />
 
 				<div
 					className={`reader-chrome pointer-events-none absolute inset-0 z-20 ${
@@ -951,12 +1166,18 @@ export default function ReaderPage() {
 						</div>
 					</div>
 				</div>
-			</div>
+			</motion.div>
 		);
 	}
 
 	return (
-		<div ref={shellRef} className="reader-shell relative flex flex-col">
+		<motion.div
+			ref={shellRef}
+			initial={{ opacity: 0 }}
+			animate={{ opacity: 1 }}
+			transition={LOAD_FADE}
+			className="reader-shell relative flex flex-col"
+		>
 			<header className="relative shrink-0 px-16 pt-[max(1.25rem,env(safe-area-inset-top))] pb-2">
 				<Link
 					to="/library"
@@ -989,7 +1210,10 @@ export default function ReaderPage() {
 				</button>
 
 				<div className="mx-auto flex min-h-0 w-full max-w-[1300px] flex-1 flex-col overflow-hidden px-10">
-					<main className="min-h-0 flex-1 overflow-hidden py-3">{contentBody}</main>
+					<main className="relative min-h-0 flex-1 overflow-hidden py-3">
+						{swipeStage}
+						<div className="reader-swipe-surface" {...swipe.surfaceProps} aria-hidden />
+					</main>
 					<footer
 						className={`shrink-0 pt-2 pb-5 text-[12px] text-[#8a8a8a] ${
 							footerSplit ? 'grid grid-cols-2' : 'flex justify-between'
@@ -1017,6 +1241,6 @@ export default function ReaderPage() {
 			</div>
 
 			<div className="absolute right-4 bottom-4 z-20">{fullscreenButton}</div>
-		</div>
+		</motion.div>
 	);
 }

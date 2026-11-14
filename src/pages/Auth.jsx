@@ -4,7 +4,9 @@ import { BookOpen } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { useAuthStore } from '../stores/authStore';
 import { defaultRememberMe, isMobileApp } from '../lib/desktop';
-import { Button, Input, LoadingScreen } from '../components/ui';
+import { AnimatePresence } from 'framer-motion';
+
+import { Button, FadeIn, Input, LoadingScreen } from '../components/ui';
 import PinInput from '../components/auth/PinInput';
 
 function RememberMeCheckbox({ checked, onChange }) {
@@ -30,13 +32,13 @@ export function AuthShell({ children }) {
 						<div className="flex h-10 w-10 items-center justify-center rounded-sm bg-white/20">
 							<BookOpen size={22} />
 						</div>
-						<span className="text-2xl font-bold">DumaRead</span>
+						<span className="text-2xl font-bold tracking-[0.08em]">DUMAS</span>
 					</div>
 					<h1 className="text-4xl leading-tight font-bold">
-						Upload a book. Read it. Track every page.
+						Your library. Your pace. Every page counted.
 					</h1>
 					<p className="text-primary-fg/70 text-sm">
-						Your library, progress, and reading time — in one place.
+						Dumas keeps your books, reading time, and progress in one calm place.
 					</p>
 				</div>
 			</div>
@@ -201,9 +203,6 @@ export function LoginPage() {
 	const [loading, setLoading] = useState(false);
 
 	if (mfaRequired) return <MfaForm />;
-	if (status === 'idle' || status === 'loading') {
-		return <LoadingScreen label="Restoring your session…" />;
-	}
 	if (status === 'authenticated' && user) {
 		return <Navigate to="/" replace />;
 	}
@@ -224,42 +223,54 @@ export function LoginPage() {
 		}
 	};
 
+	const restoring = status === 'idle' || status === 'loading';
+
 	return (
-		<AuthShell>
-			<h2 className="text-fg text-2xl font-bold">Welcome back</h2>
-			<form onSubmit={submit} className="mt-6 space-y-4" autoComplete="off">
-				<Input
-					label="Email"
-					type="email"
-					value={email}
-					onChange={(e) => setEmail(e.target.value)}
-					placeholder="Email"
-					autoComplete="username"
-					required
-				/>
-				<Input
-					label="Password"
-					type="password"
-					value={password}
-					onChange={(e) => setPassword(e.target.value)}
-					placeholder="Password"
-					autoComplete="off"
-					required
-				/>
-				<RememberMeCheckbox checked={remember} onChange={setRemember} />
-				{error && <p className="bg-danger/10 text-danger rounded-md px-3 py-2 text-sm">{error}</p>}
-				<Button type="submit" className="w-full" loading={loading}>
-					Sign in
-				</Button>
-			</form>
-			<OAuthButtons />
-			<p className="text-muted mt-6 text-center text-sm">
-				No account?{' '}
-				<Link to="/register" className="text-primary">
-					Create one
-				</Link>
-			</p>
-		</AuthShell>
+		<AnimatePresence mode="wait">
+			{restoring ? (
+				<LoadingScreen key="login-loading" label="Restoring your session…" />
+			) : (
+				<FadeIn key="login-form">
+					<AuthShell>
+						<h2 className="text-fg text-2xl font-bold">Welcome back</h2>
+						<form onSubmit={submit} className="mt-6 space-y-4" autoComplete="off">
+							<Input
+								label="Email"
+								type="email"
+								value={email}
+								onChange={(e) => setEmail(e.target.value)}
+								placeholder="Email"
+								autoComplete="username"
+								required
+							/>
+							<Input
+								label="Password"
+								type="password"
+								value={password}
+								onChange={(e) => setPassword(e.target.value)}
+								placeholder="Password"
+								autoComplete="off"
+								required
+							/>
+							<RememberMeCheckbox checked={remember} onChange={setRemember} />
+							{error && (
+								<p className="bg-danger/10 text-danger rounded-md px-3 py-2 text-sm">{error}</p>
+							)}
+							<Button type="submit" className="w-full" loading={loading}>
+								Sign in
+							</Button>
+						</form>
+						<OAuthButtons />
+						<p className="text-muted mt-6 text-center text-sm">
+							No account?{' '}
+							<Link to="/register" className="text-primary">
+								Create one
+							</Link>
+						</p>
+					</AuthShell>
+				</FadeIn>
+			)}
+		</AnimatePresence>
 	);
 }
 
@@ -291,8 +302,8 @@ export function RegisterPage() {
 			<h2 className="text-fg text-2xl font-bold">Create account</h2>
 			{isMobileApp() && (
 				<p className="text-muted mt-2 text-sm">
-					If you already use DumaRead on your Mac, sign in with that email instead. New accounts:
-					open the verification link on the Mac, then sign in here.
+					If you already use Dumas on your Mac, sign in with that email instead. New accounts: open
+					the verification link on the Mac, then sign in here.
 				</p>
 			)}
 			<form onSubmit={submit} className="mt-6 space-y-4">

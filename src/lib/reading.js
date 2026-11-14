@@ -1,6 +1,6 @@
 // Keep in sync with backend/apps/books/constants.py
 export const WORDS_PER_PAGE = 300;
-export const MAX_BOOK_BYTES = 50 * 1024 * 1024;
+export const MAX_BOOK_BYTES = 100 * 1024 * 1024;
 export const HEARTBEAT_MS = 15_000;
 export const ACCEPTED_BOOK_TYPES = '.pdf,.epub,.txt';
 

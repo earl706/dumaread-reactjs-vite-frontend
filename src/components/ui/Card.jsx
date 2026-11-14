@@ -1,7 +1,9 @@
 import { isValidElement } from 'react';
+import { AnimatePresence, motion } from 'framer-motion';
 
 import { cn } from '../../lib/format';
 import { Button } from './Button';
+import { LOAD_FADE } from './feedback';
 
 export function Card({ className, as: Tag = 'div', ...props }) {
 	return <Tag className={cn('border-line bg-surface rounded-md border', className)} {...props} />;
@@ -155,18 +157,43 @@ export function CoverCard({
 				onKeyDown={openable ? onCoverKeyDown : undefined}
 				aria-label={openable ? coverLabel : undefined}
 			>
-				{imageSrc ? (
-					<img src={imageSrc} alt="" className="absolute inset-0 h-full w-full object-cover" />
-				) : fallback ? (
-					<div className="absolute inset-0">{fallback}</div>
-				) : (
-					<div
-						className="bg-surface-2 text-muted absolute inset-0 flex items-center justify-center"
-						aria-hidden
-					>
-						{FallbackIcon ? <FallbackIcon size={28} strokeWidth={1.5} /> : null}
-					</div>
-				)}
+				<AnimatePresence mode="sync">
+					{imageSrc ? (
+						<motion.img
+							key={imageSrc}
+							src={imageSrc}
+							alt=""
+							initial={{ opacity: 0 }}
+							animate={{ opacity: 1 }}
+							exit={{ opacity: 0 }}
+							transition={LOAD_FADE}
+							className="absolute inset-0 h-full w-full object-cover"
+						/>
+					) : fallback ? (
+						<motion.div
+							key="cover-fallback"
+							initial={{ opacity: 0 }}
+							animate={{ opacity: 1 }}
+							exit={{ opacity: 0 }}
+							transition={LOAD_FADE}
+							className="absolute inset-0"
+						>
+							{fallback}
+						</motion.div>
+					) : (
+						<motion.div
+							key="cover-empty"
+							initial={{ opacity: 0 }}
+							animate={{ opacity: 1 }}
+							exit={{ opacity: 0 }}
+							transition={LOAD_FADE}
+							className="bg-surface-2 text-muted absolute inset-0 flex items-center justify-center"
+							aria-hidden
+						>
+							{FallbackIcon ? <FallbackIcon size={28} strokeWidth={1.5} /> : null}
+						</motion.div>
+					)}
+				</AnimatePresence>
 				<div className="pointer-events-none absolute inset-x-0 top-0 h-36 bg-linear-to-b from-black/85 via-black/50 to-transparent" />
 				<div className="pointer-events-none absolute inset-0 bg-linear-to-t from-black/50 to-transparent" />
 
@@ -187,7 +214,11 @@ export function CoverCard({
 				) : null}
 
 				{coverBadge ? (
-					<div className="absolute top-2 right-2 z-20" onClick={stop} onKeyDown={stop}>
+					<div
+						className="absolute top-2 right-2 z-20 overflow-visible"
+						onClick={stop}
+						onKeyDown={stop}
+					>
 						{coverBadge}
 					</div>
 				) : null}

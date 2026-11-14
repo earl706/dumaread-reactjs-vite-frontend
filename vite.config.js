@@ -22,8 +22,8 @@ export default defineConfig({
 			registerType: 'autoUpdate',
 			includeAssets: ['favicon.svg', 'pwa-192.png', 'pwa-512.png'],
 			manifest: {
-				name: 'DumaRead',
-				short_name: 'DumaRead',
+				name: 'Dumas',
+				short_name: 'Dumas',
 				description: 'Upload books, read in-app, and track progress — including offline.',
 				theme_color: '#2d5a87',
 				background_color: '#0f1419',

@@ -6,7 +6,13 @@ import { formatLabel } from '../../lib/reading';
 import { STATUS_LABELS } from '../../lib/status';
 import { formatDurationSeconds } from '../../lib/format';
 import { useOfflineStore } from '../../stores/offlineStore';
-import { CoverCard, GoalProgressRings, ProgressBar, Skeleton } from '../ui';
+import {
+	CoverCard,
+	GoalProgressRings,
+	ProgressBar,
+	Skeleton,
+	formatGoalProgressTooltip
+} from '../ui';
 
 export function useCoverSrc(book) {
 	const [src, setSrc] = useState(null);
@@ -77,6 +83,29 @@ export function BookCard({ book, onRead, onEdit, onInfo, onDelete, onGoals, onTo
 	];
 
 	const goalsLabel = `Reading goals for ${title}`;
+	const configuredTooltip = formatGoalProgressTooltip(book.goal_progress);
+	const goalsTooltip =
+		configuredTooltip || formatGoalProgressTooltip(book.goal_progress, { requireGoal: false });
+	const goalsTooltipLines = goalsTooltip ? goalsTooltip.split('\n') : [];
+
+	const goalsTip = goalsTooltipLines.length ? (
+		<div
+			role="tooltip"
+			className="goals-tip pointer-events-none absolute top-full right-0 z-50 mt-1.5 min-w-max rounded-md bg-black/90 px-2 py-1.5 text-left text-[10px] leading-snug text-white opacity-0 shadow-lg transition-opacity duration-100"
+		>
+			{!configuredTooltip ? (
+				<div className="mb-1 whitespace-nowrap text-white/70">No goals set</div>
+			) : null}
+			{goalsTooltipLines.map((line) => (
+				<div key={line} className="whitespace-nowrap tabular-nums">
+					{line}
+				</div>
+			))}
+		</div>
+	) : null;
+
+	const goalsBadgeClass =
+		'relative rounded-full bg-black/45 p-0.5 backdrop-blur-sm [&:hover>.goals-tip]:opacity-100 [&:focus-visible>.goals-tip]:opacity-100 [&:focus-within>.goals-tip]:opacity-100';
 
 	return (
 		<CoverCard
@@ -93,15 +122,26 @@ export function BookCard({ book, onRead, onEdit, onInfo, onDelete, onGoals, onTo
 					<button
 						type="button"
 						onClick={() => onGoals(book)}
-						className="cursor-pointer rounded-full bg-black/45 p-0.5 backdrop-blur-sm transition hover:bg-black/60 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white"
+						className={`cursor-pointer transition hover:bg-black/60 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white ${goalsBadgeClass}`}
 						aria-label={goalsLabel}
-						title={goalsLabel}
 					>
-						<GoalProgressRings progress={book.goal_progress} size={40} stroke={3} />
+						<GoalProgressRings
+							progress={book.goal_progress}
+							size={40}
+							stroke={3}
+							title={goalsLabel}
+						/>
+						{goalsTip}
 					</button>
 				) : (
-					<div className="rounded-full bg-black/45 p-0.5 backdrop-blur-sm">
-						<GoalProgressRings progress={book.goal_progress} size={40} stroke={3} />
+					<div className={goalsBadgeClass}>
+						<GoalProgressRings
+							progress={book.goal_progress}
+							size={40}
+							stroke={3}
+							title={goalsLabel}
+						/>
+						{goalsTip}
 					</div>
 				)
 			}

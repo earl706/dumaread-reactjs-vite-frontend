@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { AnimatePresence } from 'framer-motion';
 import { BookOpen, Plus } from 'lucide-react';
 
 import { booksApi } from '../lib/resources';
@@ -27,6 +28,7 @@ import { UploadPreview } from '../components/books/UploadPreview';
 import {
 	Button,
 	EmptyState,
+	FadeIn,
 	Input,
 	ListToolbar,
 	LoadingScreen,
@@ -311,7 +313,7 @@ export default function BooksPage() {
 			return;
 		}
 		if (form.file.size > MAX_BOOK_BYTES) {
-			toast.error('File must be 50 MB or smaller.');
+			toast.error('File must be 100 MB or smaller.');
 			return;
 		}
 		const body = new FormData();
@@ -363,48 +365,55 @@ export default function BooksPage() {
 				]}
 			/>
 
-			{online && isLoading ? (
-				<LoadingScreen />
-			) : books.length === 0 ? (
-				<EmptyState
-					icon={BookOpen}
-					title={
-						!online ? 'No offline books' : isError ? 'Could not load your library' : 'No books yet'
-					}
-					description={
-						!online
-							? 'Save books for offline while online, then reopen them here.'
-							: isError
-								? 'Something went wrong while fetching your books.'
-								: 'Upload a PDF, EPUB, or TXT file to start reading.'
-					}
-					action={
-						online && !isError ? (
-							<Button onClick={openCreate}>
-								<Plus size={16} /> Upload book
-							</Button>
-						) : null
-					}
-				/>
-			) : (
-				<div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-					{books.map((book) => (
-						<BookCard
-							key={book.id}
-							book={book}
-							onRead={openReader}
-							onEdit={online ? openEdit : undefined}
-							onInfo={online ? setInfoRow : undefined}
-							onDelete={online ? setDeleting : undefined}
-							onGoals={online ? openGoals : undefined}
-							onToggleOffline={async (row, isSaved) => {
-								if (isSaved) await removeBookForOffline(row.id, row.title);
-								else await saveBookForOffline(row);
-							}}
-						/>
-					))}
-				</div>
-			)}
+			<AnimatePresence mode="wait">
+				{online && isLoading ? (
+					<LoadingScreen key="books-loading" />
+				) : books.length === 0 ? (
+					<EmptyState
+						key="books-empty"
+						icon={BookOpen}
+						title={
+							!online
+								? 'No offline books'
+								: isError
+									? 'Could not load your library'
+									: 'No books yet'
+						}
+						description={
+							!online
+								? 'Save books for offline while online, then reopen them here.'
+								: isError
+									? 'Something went wrong while fetching your books.'
+									: 'Upload a PDF, EPUB, or TXT file to start reading.'
+						}
+						action={
+							online && !isError ? (
+								<Button onClick={openCreate}>
+									<Plus size={16} /> Upload book
+								</Button>
+							) : null
+						}
+					/>
+				) : (
+					<FadeIn key="books-grid" className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+						{books.map((book) => (
+							<BookCard
+								key={book.id}
+								book={book}
+								onRead={openReader}
+								onEdit={online ? openEdit : undefined}
+								onInfo={online ? setInfoRow : undefined}
+								onDelete={online ? setDeleting : undefined}
+								onGoals={online ? openGoals : undefined}
+								onToggleOffline={async (row, isSaved) => {
+									if (isSaved) await removeBookForOffline(row.id, row.title);
+									else await saveBookForOffline(row);
+								}}
+							/>
+						))}
+					</FadeIn>
+				)}
+			</AnimatePresence>
 
 			<Pagination
 				page={page}

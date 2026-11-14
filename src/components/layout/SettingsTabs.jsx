@@ -2,7 +2,7 @@ import { useSearchParams } from 'react-router-dom';
 
 import { Button } from '../ui';
 
-/** Default Settings sections for DumaRead (Goals is app-specific). */
+/** Default Settings sections for Dumas (Goals is app-specific). */
 export const DEFAULT_SETTINGS_TABS = [
 	{ id: 'shortcuts', label: 'Shortcuts', mobileOnly: true },
 	{ id: 'account', label: 'Account' },

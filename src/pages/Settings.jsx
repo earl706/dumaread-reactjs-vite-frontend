@@ -169,7 +169,7 @@ export default function SettingsPage() {
 										className="w-full"
 										onClick={() => promptInstall()}
 									>
-										<Download size={16} /> Install DumaRead
+										<Download size={16} /> Install Dumas
 									</Button>
 								) : (
 									<p className="text-muted text-xs">

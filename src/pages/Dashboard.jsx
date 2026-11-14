@@ -1,4 +1,5 @@
 import { useNavigate } from 'react-router-dom';
+import { AnimatePresence } from 'framer-motion';
 import { BookOpen, Clock, Layers, BookMarked } from 'lucide-react';
 
 import { useAuthStore } from '../stores/authStore';
@@ -8,7 +9,7 @@ import { formatDurationSeconds } from '../lib/format';
 import { PageHeader } from '../components/layout/PageHeader';
 import { ActivityHeatmap } from '../components/analytics/ActivityHeatmap';
 import { RecentBookShortcut } from '../components/books/RecentBookShortcut';
-import { Card, CardBody, CardHeader, StatCard } from '../components/ui';
+import { Card, CardBody, CardHeader, FadeIn, Skeleton, StatCard } from '../components/ui';
 
 function greeting() {
 	const hour = new Date().getHours();
@@ -73,20 +74,28 @@ export default function DashboardPage() {
 					<CardHeader title="Recent Reads" />
 					<CardBody>
 						<div className="flex h-[150px] max-h-[150px] gap-4 overflow-x-auto">
-							{recentLoading
-								? Array.from({ length: 5 }, (_, i) => (
-										<div
-											key={i}
-											className="bg-surface-2 h-full w-[calc((100%-4rem)/5)] min-w-[5.5rem] shrink-0 animate-pulse rounded-md"
-										/>
-									))
-								: recentBooks.map((book) => (
-										<RecentBookShortcut
-											key={book.id}
-											book={book}
-											onOpen={() => navigate(`/books/${book.id}/read`)}
-										/>
-									))}
+							<AnimatePresence mode="wait">
+								{recentLoading ? (
+									<FadeIn key="recent-loading" className="flex h-full w-full gap-4">
+										{Array.from({ length: 5 }, (_, i) => (
+											<Skeleton
+												key={i}
+												className="h-full w-[calc((100%-4rem)/5)] min-w-[5.5rem] shrink-0"
+											/>
+										))}
+									</FadeIn>
+								) : (
+									<FadeIn key="recent-ready" className="flex h-full w-full gap-4">
+										{recentBooks.map((book) => (
+											<RecentBookShortcut
+												key={book.id}
+												book={book}
+												onOpen={() => navigate(`/books/${book.id}/read`)}
+											/>
+										))}
+									</FadeIn>
+								)}
+							</AnimatePresence>
 						</div>
 					</CardBody>
 				</Card>

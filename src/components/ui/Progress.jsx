@@ -82,6 +82,28 @@ const PERIOD_ORDER = [
 	{ key: 'monthly', tone: 'accent', label: 'Monthly' }
 ];
 
+function goalPeriodLine(entry, label, { requireGoal = true } = {}) {
+	if (!entry) return null;
+	if (requireGoal && entry.goal_minutes == null) return null;
+	const spent = formatGoalSpent(entry);
+	if (entry.goal_minutes == null) return `${label}: ${spent}`;
+	const pct = entry.percent ?? 0;
+	return `${label}: ${spent} / ${entry.goal_minutes}m (${Math.round(pct)}%)`;
+}
+
+/**
+ * Hover tooltip lines for goal periods.
+ * With requireGoal (default), only periods that have a target are included.
+ * Returns empty string when nothing qualifies.
+ */
+export function formatGoalProgressTooltip(progress, { requireGoal = true } = {}) {
+	return PERIOD_ORDER.map(({ key, label }) =>
+		goalPeriodLine(progress?.[key], label, { requireGoal })
+	)
+		.filter(Boolean)
+		.join('\n');
+}
+
 /**
  * Three concentric rings: inner daily, middle weekly, outer monthly.
  * Unset periods render as empty ghost tracks; set periods fill by percent.
@@ -106,12 +128,12 @@ export function GoalProgressRings({
 	const trackStroke = variant === 'surface' ? 'var(--surface-2)' : 'rgba(255,255,255,0.55)';
 
 	const ariaParts = PERIOD_ORDER.map(({ key, label }) => {
-		const entry = progress?.[key];
-		if (entry?.goal_minutes == null) return `${label}: no goal`;
-		const pct = entry.percent ?? 0;
-		const spent = formatGoalSpent(entry);
-		return `${label}: ${spent} / ${entry.goal_minutes}m (${Math.round(pct)}%)`;
+		return goalPeriodLine(progress?.[key], label) || `${label}: no goal`;
 	});
+	const defaultTitle =
+		formatGoalProgressTooltip(progress) ||
+		formatGoalProgressTooltip(progress, { requireGoal: false }) ||
+		ariaParts.join('\n');
 
 	return (
 		<div
@@ -119,7 +141,7 @@ export function GoalProgressRings({
 			style={{ width: size, height: size }}
 			role="img"
 			aria-label={title || ariaParts.join('; ')}
-			title={title || ariaParts.join('\n')}
+			title={title || defaultTitle}
 		>
 			<svg width={size} height={size} className="-rotate-90" aria-hidden>
 				{PERIOD_ORDER.map(({ key, tone }) => {
